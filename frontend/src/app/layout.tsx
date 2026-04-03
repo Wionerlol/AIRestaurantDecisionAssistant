@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "AI Restaurant Decision Assistant",
-  description: "Monorepo frontend skeleton for restaurant review analysis.",
+  description: "Minimal chat UI for the AI Restaurant Decision Assistant backend.",
 };
 
 export default function RootLayout({
@@ -17,4 +17,3 @@ export default function RootLayout({
     </html>
   );
 }
-

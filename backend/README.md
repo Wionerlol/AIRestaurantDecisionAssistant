@@ -9,6 +9,7 @@ Current endpoints:
 - `GET /restaurants`
 - `GET /restaurants/{business_id}`
 - `GET /restaurants/{business_id}/reviews`
+- `POST /chat`
 
 ## Local Run
 
@@ -31,6 +32,14 @@ To use PostgreSQL locally:
 export DATABASE_URL=postgresql+psycopg://app:app@localhost:5432/restaurant_decision
 ```
 
+To use OpenAI for chat:
+
+```bash
+export LLM_PROVIDER=openai
+export LLM_MODEL_NAME=gpt-4o-mini
+export OPENAI_API_KEY=your_api_key
+```
+
 ## Docker Compose
 
 From repository root:
@@ -40,3 +49,5 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 The backend will create tables and seed demo data on startup when `DATABASE_AUTO_SEED=true`.
+
+For local development and tests, chat defaults to the `stub` provider so no external LLM key is required.

@@ -242,38 +242,29 @@ Done condition:
 
 - Frontend or `curl` can retrieve restaurant details and review lists.
 
-### Milestone 3: Non-agent baseline analysis
+### Milestone 3: LangChain / LangGraph minimal chat loop
 
 Goal:
 
-- Produce useful structured analysis without relying on a complex agent.
+- Establish the smallest extensible agent runtime before adding business workflows.
 
 Expected outputs:
 
-- Review cleaning
-- Sentence segmentation
-- Basic sentiment analysis
-- Aspect classification rules or lightweight LLM extraction
-- High-frequency pros / cons summaries
-- Risk detection rules
-- Baseline scenario suitability logic
+- provider-pluggable LLM client
+- minimal LangGraph state and node flow
+- basic multi-message chat request / response contract
+- one chat endpoint wired through LangChain and LangGraph
+- all runtime config externalized into environment variables
 
 Done condition:
 
-- A single restaurant can yield structured analysis JSON containing:
-  - aspect scores
-  - pros
-  - cons
-  - risks
-  - scenarios
-
-This is the most important milestone because it establishes the core decision value.
+- The backend can accept chat messages and return an LLM-backed assistant response.
 
 ### Milestone 4: LangGraph agent loop
 
 Goal:
 
-- Wrap the analysis pipeline in a question-answering agent workflow.
+- Add restaurant-specific business workflows on top of the chat runtime.
 
 Expected outputs:
 

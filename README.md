@@ -1,6 +1,9 @@
 # AI Restaurant Decision Assistant
 
-Monorepo skeleton for an AI restaurant review analysis assistant. This repository is intentionally minimal: the backend and frontend both start independently, while business logic is deferred to later milestones.
+Monorepo for an AI restaurant assistant. The current backend state focuses on two foundations:
+
+- a database-backed restaurant data service
+- a minimal LangChain / LangGraph chat loop
 
 ## Structure
 
@@ -41,7 +44,6 @@ make docker-up
 
 ## Notes
 
-- The backend exposes a health endpoint and a root metadata endpoint.
-- The frontend is a static shell wired to the planned monorepo structure.
-- LangGraph, tools, memory, and business workflows are not implemented in this initialization step.
-
+- The backend exposes health, restaurant data, and chat endpoints.
+- The frontend is still a shell; restaurant-specific business workflows are intentionally deferred.
+- The current chat runtime is provider-pluggable and defaults to a local `stub` provider for development and tests.

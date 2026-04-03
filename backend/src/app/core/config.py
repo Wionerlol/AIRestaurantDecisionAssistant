@@ -6,10 +6,28 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "AI Restaurant Decision Assistant"
     app_env: str = "development"
+    app_version: str = "0.1.0"
+    app_docs_url: str = "/docs"
+    app_redoc_url: str = "/redoc"
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+    frontend_port: int = 3000
     database_url: str = "sqlite:///./backend/data/app.db"
     database_auto_seed: bool = True
     sample_businesses_path: str = "backend/data/samples/demo_businesses.jsonl"
     sample_reviews_path: str = "backend/data/samples/demo_reviews.jsonl"
+    llm_provider: str = "stub"
+    llm_model_name: str = "stub-chat-model"
+    llm_temperature: float = 0.0
+    llm_max_tokens: int | None = 256
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+    chat_system_prompt: str = (
+        "You are a concise assistant inside the AI Restaurant Decision Assistant backend. "
+        "Answer directly and keep the response grounded in the conversation."
+    )
+    stub_llm_response_prefix: str = "Stub reply: "
+    stub_llm_default_reply: str = "Hello from the stub model."
 
     model_config = SettingsConfigDict(
         env_file=".env",

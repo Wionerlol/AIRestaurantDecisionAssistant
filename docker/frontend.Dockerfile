@@ -9,5 +9,4 @@ COPY frontend/src /app/src
 RUN npm install
 
 EXPOSE 3000
-CMD ["npm", "run", "dev"]
-
+CMD ["sh", "-c", "npm run dev -- --hostname 0.0.0.0 --port ${FRONTEND_PORT:-3000}"]

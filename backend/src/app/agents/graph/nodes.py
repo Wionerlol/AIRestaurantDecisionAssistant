@@ -19,6 +19,31 @@ def classify_user_intent(state: ChatGraphState) -> ChatGraphState:
     }
 
 
+def generate_unsupported_response(_: ChatGraphState) -> ChatGraphState:
+    return {
+        "messages": [
+            AIMessage(
+                content=(
+                    "Sorry, I can only help with a fixed set of restaurant questions right now. "
+                    "Try one of these examples:\n"
+                    "- Is this restaurant worth it?\n"
+                    "- Should I go or skip?\n"
+                    "- How is the food?\n"
+                    "- How is the service?\n"
+                    "- Is it expensive?\n"
+                    "- How is the ambience?\n"
+                    "- Is it good for a date?\n"
+                    "- Is it family friendly?\n"
+                    "- Is it good for a quick meal?\n"
+                    "- Any common complaints?\n"
+                    "- Any warnings?\n"
+                    "- Give me a summary."
+                )
+            )
+        ]
+    }
+
+
 def generate_chat_response(state: ChatGraphState) -> ChatGraphState:
     model = get_chat_model()
     response = model.invoke(state["messages"])

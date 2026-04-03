@@ -21,8 +21,11 @@ KEYWORD_RULES: list[tuple[str, str, tuple[str, ...]]] = [
 def classify_intent(text: str) -> ChatIntent:
     normalized = text.strip().lower()
 
+    if "summary" in normalized or "summarize" in normalized or "overview" in normalized:
+        return ChatIntent(category="summary", label="summary")
+
     for category, label, keywords in KEYWORD_RULES:
         if any(keyword in normalized for keyword in keywords):
             return ChatIntent(category=category, label=label)
 
-    return ChatIntent(category="summary", label="summary")
+    return ChatIntent(category="unknown", label="unsupported")

@@ -11,9 +11,10 @@ def test_chat_returns_stub_response() -> None:
     assert response.provider == "stub"
     assert response.model == "stub-chat-model"
     assert response.message.role == "assistant"
-    assert response.intent.category == "summary"
-    assert response.intent.label == "summary"
-    assert response.message.content == "Stub reply: Hello graph"
+    assert response.intent.category == "unknown"
+    assert response.intent.label == "unsupported"
+    assert "Sorry, I can only help with a fixed set of restaurant questions right now." in response.message.content
+    assert "Is this restaurant worth it?" in response.message.content
 
 
 def test_chat_includes_configurable_stub_prefix() -> None:
@@ -28,9 +29,9 @@ def test_chat_includes_configurable_stub_prefix() -> None:
 
     try:
         response = run_chat(
-            ChatRequest(messages=[{"role": "user", "content": "Config check"}])
+            ChatRequest(messages=[{"role": "user", "content": "How is the service here?"}])
         )
-        assert response.message.content == "Configured: Config check"
+        assert response.message.content == "Configured: How is the service here?"
     finally:
         settings.stub_llm_response_prefix = original_prefix
         reset_chat_model()
@@ -101,3 +102,17 @@ def test_intent_classifier_detects_category_and_label_pairs() -> None:
         "category": "summary",
         "label": "summary",
     }
+    assert classify_intent("Tell me something random").model_dump() == {
+        "category": "unknown",
+        "label": "unsupported",
+    }
+
+
+def test_supported_intent_still_uses_stub_model_response() -> None:
+    response = run_chat(
+        ChatRequest(messages=[{"role": "user", "content": "How is the food here?"}])
+    )
+
+    assert response.intent.category == "aspect"
+    assert response.intent.label == "food"
+    assert response.message.content == "Stub reply: How is the food here?"

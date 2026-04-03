@@ -18,10 +18,10 @@ class ChatRestaurantContext(BaseModel):
 
 class ChatIntent(BaseModel):
     category: str = Field(
-        pattern="^(recommendation|aspect|scenario|risk|summary)$"
+        pattern="^(recommendation|aspect|scenario|risk|summary|unknown)$"
     )
     label: str = Field(
-        pattern="^(worth_it|should_go|food|service|price|ambience|date|family|quick_meal|complaints|warnings|summary)$"
+        pattern="^(worth_it|should_go|food|service|price|ambience|date|family|quick_meal|complaints|warnings|summary|unsupported)$"
     )
 
 

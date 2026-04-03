@@ -10,7 +10,7 @@ type ChatMessage = {
 };
 
 type ChatIntent = {
-  category: "recommendation" | "aspect" | "scenario" | "risk" | "summary";
+  category: "recommendation" | "aspect" | "scenario" | "risk" | "summary" | "unknown";
   label:
     | "worth_it"
     | "should_go"
@@ -23,7 +23,8 @@ type ChatIntent = {
     | "quick_meal"
     | "complaints"
     | "warnings"
-    | "summary";
+    | "summary"
+    | "unsupported";
 };
 
 type RestaurantSummary = {

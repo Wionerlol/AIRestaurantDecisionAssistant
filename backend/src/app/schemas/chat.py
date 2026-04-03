@@ -6,8 +6,19 @@ class ChatMessage(BaseModel):
     content: str = Field(min_length=1)
 
 
+class ChatRestaurantContext(BaseModel):
+    business_id: str
+    name: str
+    city: str
+    state: str
+    stars: float | None = None
+    review_count: int
+    categories: list[str]
+
+
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1)
+    restaurant_context: ChatRestaurantContext | None = None
 
 
 class ChatResponse(BaseModel):
@@ -16,3 +27,4 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     message: ChatMessage
+    restaurant_context: ChatRestaurantContext | None = None

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 type ChatRole = "user" | "assistant";
 
@@ -9,25 +9,120 @@ type ChatMessage = {
   content: string;
 };
 
+type RestaurantSummary = {
+  business_id: string;
+  name: string;
+  city: string;
+  state: string;
+  stars: number | null;
+  review_count: number;
+  categories: string[];
+};
+
+type RestaurantSearchResponse = {
+  total: number;
+  items: RestaurantSummary[];
+};
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
-const starterMessages: ChatMessage[] = [
-  {
-    role: "assistant",
-    content:
-      "Minimal LangGraph chat loop is online. Ask anything to verify the frontend-to-backend path.",
-  },
-];
+const idleAssistantMessage =
+  "Choose a restaurant from the search panel first. After that, every message will be sent in the context of that restaurant only.";
+
+function buildStarterMessages(restaurant: RestaurantSummary | null): ChatMessage[] {
+  if (!restaurant) {
+    return [{ role: "assistant", content: idleAssistantMessage }];
+  }
+
+  const categories = restaurant.categories.slice(0, 4).join(", ") || "Unknown";
+  const rating = restaurant.stars !== null ? `${restaurant.stars.toFixed(1)}/5` : "N/A";
+
+  return [
+    {
+      role: "assistant",
+      content: `Selected restaurant: ${restaurant.name}. Categories: ${categories}. Rating: ${rating}. Ask about this restaurant only.`,
+    },
+  ];
+}
+
+function formatCategories(categories: string[]) {
+  return categories.filter((category) => category !== "Restaurants").slice(0, 3);
+}
 
 export function ChatShell() {
-  const [messages, setMessages] = useState<ChatMessage[]>(starterMessages);
+  const [restaurants, setRestaurants] = useState<RestaurantSummary[]>([]);
+  const [search, setSearch] = useState("");
+  const [selectedRestaurant, setSelectedRestaurant] = useState<RestaurantSummary | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>(buildStarterMessages(null));
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const [searchError, setSearchError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+
+    async function loadRestaurants() {
+      setSearchStatus("loading");
+      setSearchError("");
+
+      try {
+        const params = new URLSearchParams({ limit: "12" });
+        if (search.trim()) {
+          params.set("query", search.trim());
+        }
+
+        const response = await fetch(`${API_BASE_URL}/restaurants?${params.toString()}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Backend returned ${response.status}`);
+        }
+
+        const payload = (await response.json()) as RestaurantSearchResponse;
+        if (!active) {
+          return;
+        }
+
+        setRestaurants(payload.items);
+        setSearchStatus("idle");
+      } catch (error) {
+        if (!active || controller.signal.aborted) {
+          return;
+        }
+        setSearchStatus("error");
+        setSearchError(error instanceof Error ? error.message : "Unable to load restaurants.");
+      }
+    }
+
+    void loadRestaurants();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [search]);
+
+  function handleRestaurantSelect(restaurant: RestaurantSummary) {
+    setSelectedRestaurant(restaurant);
+    setMessages(buildStarterMessages(restaurant));
+    setInput("");
+    setStatus("idle");
+    setErrorMessage("");
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!selectedRestaurant) {
+      setStatus("error");
+      setErrorMessage("Select a restaurant before sending a question.");
+      return;
+    }
 
     const trimmed = input.trim();
     if (!trimmed || status === "loading") {
@@ -47,6 +142,7 @@ export function ChatShell() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          restaurant_context: selectedRestaurant,
           messages: nextMessages.map((message) => ({
             role: message.role,
             content: message.content,
@@ -78,11 +174,11 @@ export function ChatShell() {
   return (
     <main className="chat-page">
       <section className="chat-panel chat-panel--intro">
-        <p className="chat-eyebrow">LangChain + LangGraph</p>
-        <h1 className="chat-title">Minimal Chat Console</h1>
+        <p className="chat-eyebrow">Restaurant Search</p>
+        <h1 className="chat-title">Pick One Restaurant, Then Ask</h1>
         <p className="chat-copy">
-          This page only validates the base chat loop. It does not touch restaurant
-          analysis, retrieval, or recommendation workflows.
+          Search by restaurant name, city, or category. Once selected, the chat box stays
+          scoped to that single restaurant for decision support.
         </p>
 
         <div className="chat-meta-grid">
@@ -91,13 +187,85 @@ export function ChatShell() {
             <strong>{API_BASE_URL}</strong>
           </article>
           <article className="chat-meta-card">
-            <span className="chat-meta-label">Endpoint</span>
-            <strong>POST /chat</strong>
+            <span className="chat-meta-label">Flow</span>
+            <strong>Search → Select → Chat</strong>
           </article>
           <article className="chat-meta-card">
-            <span className="chat-meta-label">Default Model</span>
-            <strong>stub-chat-model</strong>
+            <span className="chat-meta-label">Chat Scope</span>
+            <strong>Single restaurant only</strong>
           </article>
+        </div>
+      </section>
+
+      <section className="chat-panel chat-panel--search">
+        <div className="restaurant-search-header">
+          <div>
+            <h2>Restaurants</h2>
+            <p>Search before opening the chat context.</p>
+          </div>
+          <div className={`chat-status chat-status--${searchStatus}`}>
+            {searchStatus === "idle" && "Loaded"}
+            {searchStatus === "loading" && "Loading"}
+            {searchStatus === "error" && "Error"}
+          </div>
+        </div>
+
+        <label className="chat-label" htmlFor="restaurant-search">
+          Search
+        </label>
+        <input
+          id="restaurant-search"
+          className="restaurant-search-input"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search restaurant name, city, or type..."
+        />
+
+        <span className="chat-error">{searchError}</span>
+
+        <div className="restaurant-grid">
+          {restaurants.map((restaurant) => {
+            const categories = formatCategories(restaurant.categories);
+            const isSelected = selectedRestaurant?.business_id === restaurant.business_id;
+
+            return (
+              <button
+                key={restaurant.business_id}
+                type="button"
+                className={`restaurant-card ${isSelected ? "restaurant-card--selected" : ""}`}
+                onClick={() => handleRestaurantSelect(restaurant)}
+              >
+                <div className="restaurant-card-top">
+                  <div>
+                    <h3>{restaurant.name}</h3>
+                    <p>
+                      {restaurant.city}, {restaurant.state}
+                    </p>
+                  </div>
+                  <div className="restaurant-rating">
+                    <strong>{restaurant.stars?.toFixed(1) ?? "N/A"}</strong>
+                    <span>{restaurant.review_count} reviews</span>
+                  </div>
+                </div>
+
+                <div className="restaurant-badges">
+                  {categories.map((category) => (
+                    <span key={category} className="restaurant-badge">
+                      {category}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="restaurant-rating-bar">
+                  <span
+                    style={{
+                      width: `${Math.max(8, ((restaurant.stars ?? 0) / 5) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -109,9 +277,9 @@ export function ChatShell() {
             {status === "error" && "Error"}
           </div>
           <span className="chat-status-note">
-            {status === "loading"
-              ? "Waiting for backend reply..."
-              : "Messages are sent as a full conversation transcript."}
+            {selectedRestaurant
+              ? `Current restaurant: ${selectedRestaurant.name}`
+              : "No restaurant selected yet."}
           </span>
         </div>
 
@@ -129,7 +297,7 @@ export function ChatShell() {
 
         <form className="chat-composer" onSubmit={handleSubmit}>
           <label className="chat-label" htmlFor="chat-input">
-            Message
+            Ask about the selected restaurant
           </label>
           <textarea
             id="chat-input"
@@ -137,7 +305,12 @@ export function ChatShell() {
             rows={4}
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="Type a message to exercise the chat graph..."
+            placeholder={
+              selectedRestaurant
+                ? `Ask about ${selectedRestaurant.name}...`
+                : "Select a restaurant before chatting..."
+            }
+            disabled={!selectedRestaurant}
           />
           <div className="chat-actions">
             <span className="chat-error">{errorMessage}</span>

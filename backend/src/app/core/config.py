@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
     frontend_port: int = 3000
+    cors_allow_origins: str = "http://127.0.0.1:3000,http://localhost:3000"
+    cors_allow_credentials: bool = True
+    cors_allow_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    cors_allow_headers: str = "*"
     database_url: str = "sqlite:///./backend/data/app.db"
     database_auto_seed: bool = True
     sample_businesses_path: str = "backend/data/samples/demo_businesses.jsonl"
@@ -46,6 +50,20 @@ class Settings(BaseSettings):
     @property
     def sample_reviews_file(self) -> Path:
         return self.project_root / self.sample_reviews_path
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
+
+    @property
+    def cors_methods_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_allow_methods.split(",") if item.strip()]
+
+    @property
+    def cors_headers_list(self) -> list[str]:
+        if self.cors_allow_headers.strip() == "*":
+            return ["*"]
+        return [item.strip() for item in self.cors_allow_headers.split(",") if item.strip()]
 
 
 settings = Settings()

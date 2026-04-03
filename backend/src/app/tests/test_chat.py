@@ -1,5 +1,5 @@
 from app.schemas.chat import ChatRequest
-from app.services.chat_service import run_chat
+from app.services.chat_service import build_chat_messages, run_chat
 
 
 def test_chat_returns_stub_response() -> None:
@@ -32,3 +32,46 @@ def test_chat_includes_configurable_stub_prefix() -> None:
         settings.stub_llm_response_prefix = original_prefix
         reset_chat_model()
         reset_chat_graph()
+
+
+def test_chat_request_can_include_restaurant_context() -> None:
+    request = ChatRequest(
+        restaurant_context={
+            "business_id": "restaurant-1",
+            "name": "Demo Bistro",
+            "city": "Philadelphia",
+            "state": "PA",
+            "stars": 4.5,
+            "review_count": 120,
+            "categories": ["Restaurants", "French"],
+        },
+        messages=[{"role": "user", "content": "Is this place good for dinner?"}],
+    )
+
+    messages = build_chat_messages(request)
+
+    assert messages[1].type == "system"
+    assert "Demo Bistro" in messages[1].content
+    assert "Philadelphia" in messages[1].content
+    assert "French" in messages[1].content
+
+
+def test_chat_response_preserves_restaurant_context() -> None:
+    response = run_chat(
+        ChatRequest(
+            restaurant_context={
+                "business_id": "restaurant-1",
+                "name": "Demo Bistro",
+                "city": "Philadelphia",
+                "state": "PA",
+                "stars": 4.5,
+                "review_count": 120,
+                "categories": ["Restaurants", "French"],
+            },
+            messages=[{"role": "user", "content": "Should I go?"}],
+        )
+    )
+
+    assert response.restaurant_context is not None
+    assert response.restaurant_context.name == "Demo Bistro"
+    assert response.restaurant_context.business_id == "restaurant-1"

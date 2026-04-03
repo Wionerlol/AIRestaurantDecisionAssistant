@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_chat import router as chat_router
 from app.api.routes_health import router as health_router
@@ -21,6 +22,13 @@ app = FastAPI(
     docs_url=settings.app_docs_url,
     redoc_url=settings.app_redoc_url,
     lifespan=lifespan,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_methods_list,
+    allow_headers=settings.cors_headers_list,
 )
 app.include_router(health_router)
 app.include_router(chat_router)

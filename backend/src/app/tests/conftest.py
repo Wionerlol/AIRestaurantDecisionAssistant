@@ -32,3 +32,28 @@ def db_session(tmp_path: Path) -> Session:
         reset_db_caches()
         settings.database_url = original_database_url
         settings.database_auto_seed = original_auto_seed
+
+
+@pytest.fixture(autouse=True)
+def force_stub_llm() -> None:
+    original_llm_provider = settings.llm_provider
+    original_llm_model_name = settings.llm_model_name
+    original_stub_prefix = settings.stub_llm_response_prefix
+    original_stub_default_reply = settings.stub_llm_default_reply
+
+    settings.llm_provider = "stub"
+    settings.llm_model_name = "stub-chat-model"
+    settings.stub_llm_response_prefix = "Stub reply: "
+    settings.stub_llm_default_reply = "Hello from the stub model."
+    reset_chat_model()
+    reset_chat_graph()
+
+    try:
+        yield
+    finally:
+        settings.llm_provider = original_llm_provider
+        settings.llm_model_name = original_llm_model_name
+        settings.stub_llm_response_prefix = original_stub_prefix
+        settings.stub_llm_default_reply = original_stub_default_reply
+        reset_chat_model()
+        reset_chat_graph()

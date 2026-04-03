@@ -9,6 +9,23 @@ type ChatMessage = {
   content: string;
 };
 
+type ChatIntent = {
+  category: "recommendation" | "aspect" | "scenario" | "risk" | "summary";
+  label:
+    | "worth_it"
+    | "should_go"
+    | "food"
+    | "service"
+    | "price"
+    | "ambience"
+    | "date"
+    | "family"
+    | "quick_meal"
+    | "complaints"
+    | "warnings"
+    | "summary";
+};
+
 type RestaurantSummary = {
   business_id: string;
   name: string;
@@ -50,6 +67,14 @@ function formatCategories(categories: string[]) {
   return categories.filter((category) => category !== "Restaurants").slice(0, 3);
 }
 
+function formatIntent(intent: ChatIntent | null) {
+  if (!intent) {
+    return "No intent classified yet";
+  }
+
+  return `${intent.category} / ${intent.label.replaceAll("_", " ")}`;
+}
+
 export function ChatShell() {
   const [restaurants, setRestaurants] = useState<RestaurantSummary[]>([]);
   const [search, setSearch] = useState("");
@@ -60,6 +85,7 @@ export function ChatShell() {
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [searchError, setSearchError] = useState("");
+  const [latestIntent, setLatestIntent] = useState<ChatIntent | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -113,6 +139,7 @@ export function ChatShell() {
     setInput("");
     setStatus("idle");
     setErrorMessage("");
+    setLatestIntent(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -159,9 +186,11 @@ export function ChatShell() {
           role: "assistant";
           content: string;
         };
+        intent: ChatIntent;
       };
 
       setMessages([...nextMessages, payload.message]);
+      setLatestIntent(payload.intent);
       setStatus("idle");
     } catch (error) {
       setStatus("error");
@@ -191,8 +220,8 @@ export function ChatShell() {
             <strong>Search → Select → Chat</strong>
           </article>
           <article className="chat-meta-card">
-            <span className="chat-meta-label">Chat Scope</span>
-            <strong>Single restaurant only</strong>
+            <span className="chat-meta-label">Intent Layer</span>
+            <strong>{formatIntent(latestIntent)}</strong>
           </article>
         </div>
       </section>
@@ -281,6 +310,11 @@ export function ChatShell() {
               ? `Current restaurant: ${selectedRestaurant.name}`
               : "No restaurant selected yet."}
           </span>
+        </div>
+
+        <div className="intent-banner">
+          <span className="intent-banner-label">Recognized intent</span>
+          <strong>{formatIntent(latestIntent)}</strong>
         </div>
 
         <div className="chat-thread">

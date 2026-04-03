@@ -8,3 +8,5 @@ from langgraph.graph.message import add_messages
 
 class ChatGraphState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
+    intent_category: str
+    intent_label: str

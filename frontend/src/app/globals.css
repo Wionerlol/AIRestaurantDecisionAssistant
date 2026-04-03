@@ -306,6 +306,25 @@ textarea {
   align-content: start;
 }
 
+.intent-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(47, 96, 75, 0.08);
+}
+
+.intent-banner-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
 .chat-bubble {
   max-width: min(85%, 42rem);
   padding: 16px 18px;

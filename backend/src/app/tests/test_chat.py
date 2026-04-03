@@ -1,4 +1,5 @@
 from app.schemas.chat import ChatRequest
+from app.services.intent_service import classify_intent
 from app.services.chat_service import build_chat_messages, run_chat
 
 
@@ -10,6 +11,8 @@ def test_chat_returns_stub_response() -> None:
     assert response.provider == "stub"
     assert response.model == "stub-chat-model"
     assert response.message.role == "assistant"
+    assert response.intent.category == "summary"
+    assert response.intent.label == "summary"
     assert response.message.content == "Stub reply: Hello graph"
 
 
@@ -75,3 +78,26 @@ def test_chat_response_preserves_restaurant_context() -> None:
     assert response.restaurant_context is not None
     assert response.restaurant_context.name == "Demo Bistro"
     assert response.restaurant_context.business_id == "restaurant-1"
+
+
+def test_intent_classifier_detects_category_and_label_pairs() -> None:
+    assert classify_intent("Is this restaurant worth it?").model_dump() == {
+        "category": "recommendation",
+        "label": "worth_it",
+    }
+    assert classify_intent("How is the food here?").model_dump() == {
+        "category": "aspect",
+        "label": "food",
+    }
+    assert classify_intent("Is it good for a date?").model_dump() == {
+        "category": "scenario",
+        "label": "date",
+    }
+    assert classify_intent("Any common complaints?").model_dump() == {
+        "category": "risk",
+        "label": "complaints",
+    }
+    assert classify_intent("Give me a summary").model_dump() == {
+        "category": "summary",
+        "label": "summary",
+    }

@@ -4,7 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.graph.graph import get_chat_graph
 from app.core.config import settings
-from app.schemas.chat import ChatMessage, ChatRequest, ChatResponse, ChatRestaurantContext
+from app.schemas.chat import ChatIntent, ChatMessage, ChatRequest, ChatResponse, ChatRestaurantContext
 
 
 ROLE_TO_MESSAGE = {
@@ -52,5 +52,9 @@ def run_chat(request: ChatRequest) -> ChatResponse:
         provider=settings.llm_provider,
         model=settings.llm_model_name,
         message=ChatMessage(role="assistant", content=final_message.content),
+        intent=ChatIntent(
+            category=result["intent_category"],
+            label=result["intent_label"],
+        ),
         restaurant_context=request.restaurant_context,
     )

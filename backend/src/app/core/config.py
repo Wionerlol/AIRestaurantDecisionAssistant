@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "AI Restaurant Decision Assistant"
     app_env: str = "development"
+    database_url: str = "sqlite:///./backend/data/app.db"
+    database_auto_seed: bool = True
     sample_businesses_path: str = "backend/data/samples/demo_businesses.jsonl"
     sample_reviews_path: str = "backend/data/samples/demo_reviews.jsonl"
 

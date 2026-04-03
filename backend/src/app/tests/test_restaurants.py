@@ -1,27 +1,39 @@
-from app.api.routes_restaurants import (
-    get_restaurant_detail,
-    list_restaurant_reviews,
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.db.models import Restaurant, RestaurantAspectSignal, Review
+from app.services.restaurant_service import (
+    get_restaurant,
+    get_restaurant_reviews,
     list_restaurants,
 )
 
 
-def test_list_restaurants_returns_demo_subset() -> None:
-    payload = list_restaurants(limit=5)
+def test_database_seed_creates_restaurants_reviews_and_aspects(db_session: Session) -> None:
+    restaurant_count = db_session.scalar(select(func.count()).select_from(Restaurant))
+    review_count = db_session.scalar(select(func.count()).select_from(Review))
+    aspect_count = db_session.scalar(select(func.count()).select_from(RestaurantAspectSignal))
 
-    assert payload.total == 5
-    assert len(payload.items) == 5
-    assert payload.items[0].business_id
+    assert restaurant_count == 60
+    assert review_count == 4800
+    assert aspect_count == 60
 
 
-def test_can_fetch_restaurant_and_reviews() -> None:
-    search_payload = list_restaurants(limit=1)
-    business_id = search_payload.items[0].business_id
+def test_list_restaurants_returns_seeded_data(db_session: Session) -> None:
+    restaurants = list_restaurants(db_session, limit=5)
 
-    detail_payload = get_restaurant_detail(business_id)
-    reviews_payload = list_restaurant_reviews(business_id, limit=3)
+    assert len(restaurants) == 5
+    assert restaurants[0].business_id
+    assert restaurants[0].review_count >= restaurants[-1].review_count
 
-    assert detail_payload.business_id == business_id
-    assert reviews_payload.business_id == business_id
-    assert reviews_payload.total >= 1
-    assert len(reviews_payload.items) >= 1
-    assert reviews_payload.items[0].business_id == business_id
+
+def test_can_fetch_restaurant_and_reviews(db_session: Session) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    detail = get_restaurant(db_session, restaurant.business_id)
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=3)
+
+    assert detail is not None
+    assert detail.business_id == restaurant.business_id
+    assert len(reviews) == 3
+    assert reviews[0].business_id == restaurant.business_id

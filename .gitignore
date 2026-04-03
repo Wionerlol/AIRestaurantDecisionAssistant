@@ -13,3 +13,4 @@ build/
 
 yelp_dataset
 backend/data/samples
+backend/data/app.db

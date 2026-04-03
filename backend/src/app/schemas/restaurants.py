@@ -1,7 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class RestaurantSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     business_id: str
     name: str
     city: str
@@ -18,6 +20,8 @@ class RestaurantDetail(RestaurantSummary):
 
 
 class RestaurantReview(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     review_id: str
     user_id: str
     business_id: str

@@ -16,6 +16,13 @@ from app.agents.tools.positive_review_patterns import (
     get_positive_review_patterns,
     get_positive_review_patterns_tool,
 )
+from app.agents.tools.recent_review_trend import (
+    RECENT_REVIEW_ASPECT_COLUMNS,
+    RECENT_REVIEW_COLUMNS,
+    RecentReviewTrendToolInput,
+    get_recent_review_trend,
+    get_recent_review_trend_tool,
+)
 from app.agents.tools.restaurant_aspect_summary import (
     RESTAURANT_ASPECT_SUMMARY_COLUMNS,
     RestaurantAspectSummaryToolInput,
@@ -556,4 +563,136 @@ def test_get_positive_review_patterns_langchain_tool_invokes_database(
     assert result["data_sources"][0]["table"] == "reviews"
     assert result["data_sources"][1]["table"] == "review_aspect_signals"
     assert result["data_sources"][2]["table"] == "restaurant_aspect_signals"
+    assert result["errors"] == []
+
+
+def test_get_recent_review_trend_returns_recent_reviews_and_averages(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    result = get_recent_review_trend(
+        db_session,
+        RecentReviewTrendToolInput(business_id=restaurant.business_id, limit=3),
+    )
+
+    assert result.tool_name == "get_recent_review_trend"
+    assert result.status == "ok"
+    assert result.data.business_id == restaurant.business_id
+    assert result.data.total == 3
+    assert len(result.data.items) == 3
+    assert result.data.average_stars is not None
+    assert result.data.date_range_start is not None
+    assert result.data.date_range_end is not None
+    assert result.data.star_trend in {"improving", "declining", "stable", "unknown"}
+    assert set(result.data.aspect_average_scores) == {
+        "food",
+        "service",
+        "price",
+        "ambience",
+        "waiting_time",
+    }
+    assert result.errors == []
+
+
+def test_get_recent_review_trend_aggregates_model_outputs(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=2)
+    first_signal = db_session.get(ReviewAspectSignal, reviews[0].review_id)
+    second_signal = db_session.get(ReviewAspectSignal, reviews[1].review_id)
+    assert first_signal is not None
+    assert second_signal is not None
+
+    first_signal.overall_sentiment_label = "positive"
+    first_signal.overall_sentiment_score = 0.8
+    first_signal.food_score = 4.0
+    first_signal.risk_flags = ["recent crowding"]
+    second_signal.overall_sentiment_label = "negative"
+    second_signal.overall_sentiment_score = -0.4
+    second_signal.food_score = 2.0
+    db_session.commit()
+
+    result = get_recent_review_trend(
+        db_session,
+        RecentReviewTrendToolInput(
+            business_id=restaurant.business_id,
+            months=120,
+            limit=2,
+        ),
+    )
+
+    assert result.status == "ok"
+    assert result.data.total == 2
+    assert result.data.months == 120
+    assert result.data.average_sentiment_score == 0.2
+    assert result.data.sentiment_label_counts == {"positive": 1, "negative": 1}
+    assert result.data.aspect_average_scores["food"] == 3.0
+    assert result.data.items[0].risk_flags == ["recent crowding"]
+
+
+def test_get_recent_review_trend_returns_empty_for_missing_restaurant(
+    db_session: Session,
+) -> None:
+    result = get_recent_review_trend(
+        db_session,
+        RecentReviewTrendToolInput(business_id="missing-restaurant"),
+    )
+
+    assert result.status == "empty"
+    assert result.data.business_id == "missing-restaurant"
+    assert result.data.total == 0
+    assert result.data.average_stars is None
+    assert result.data.sentiment_label_counts == {}
+    assert result.data.items == []
+    assert result.errors == []
+
+
+def test_get_recent_review_trend_returns_source_metadata(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    result = get_recent_review_trend(
+        db_session,
+        RecentReviewTrendToolInput(business_id=restaurant.business_id, limit=1),
+    )
+
+    assert len(result.data_sources) == 2
+    assert result.data_sources[0].table == "reviews"
+    assert result.data_sources[0].columns == RECENT_REVIEW_COLUMNS
+    assert result.data_sources[1].table == "review_aspect_signals"
+    assert result.data_sources[1].columns == RECENT_REVIEW_ASPECT_COLUMNS
+
+
+def test_get_recent_review_trend_langchain_tool_metadata() -> None:
+    assert get_recent_review_trend_tool.name == "get_recent_review_trend"
+    assert get_recent_review_trend_tool.args_schema is RecentReviewTrendToolInput
+    assert "Supported intents:" in get_recent_review_trend_tool.description
+    assert "review_aspect_signals" in get_recent_review_trend_tool.description
+
+
+def test_get_recent_review_trend_langchain_tool_invokes_database(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    reset_db_caches()
+    try:
+        result = get_recent_review_trend_tool.invoke(
+            {
+                "business_id": restaurant.business_id,
+                "limit": 2,
+            }
+        )
+    finally:
+        reset_db_caches()
+
+    assert result["tool_name"] == "get_recent_review_trend"
+    assert result["status"] == "ok"
+    assert result["data"]["business_id"] == restaurant.business_id
+    assert result["data"]["total"] == 2
+    assert result["data_sources"][0]["table"] == "reviews"
+    assert result["data_sources"][1]["table"] == "review_aspect_signals"
     assert result["errors"] == []

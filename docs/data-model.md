@@ -237,12 +237,38 @@ The same `business_id` also links to the placeholder precomputed aspect table:
 - `cons`
 - `risk_flags`
 
+### 4. `review_aspect_signals`
+
+Each review also has a placeholder row for future static model inference output:
+
+- `review_id`: primary key and foreign key to `reviews.review_id`
+- `business_id`: denormalized foreign key for efficient restaurant-level aggregation
+- `overall_sentiment_score`
+- `overall_sentiment_label`
+- `food_score`
+- `service_score`
+- `price_score`
+- `ambience_score`
+- `waiting_time_score`
+- `aspect_sentiments`
+- `evidence_terms`
+- `pros`
+- `cons`
+- `risk_flags`
+- `model_name`
+- `model_version`
+- `confidence`
+
+The current seed creates one `review_aspect_signals` row per demo review, but leaves model-derived fields empty. This avoids treating Yelp star ratings as model sentiment while still making the review-level output table available to pipelines, services, and future LangGraph tools.
+
 That means one review currently sits in this relationship chain:
 
 ```text
 reviews.review_id
+  -> review_aspect_signals.review_id
   -> reviews.business_id
   -> restaurants.business_id
+  -> review_aspect_signals.business_id
   -> restaurant_aspect_signals.business_id
 ```
 
@@ -253,6 +279,14 @@ Using one review as the center point, the current structure already supports:
 - fetching the review text and metadata
 - knowing which restaurant the review belongs to
 - showing restaurant-level summary data next to the review
+- storing per-review static model aspect and sentiment outputs
 - attaching future precomputed aspect/risk summaries at the restaurant level
 
-The current schema does not yet attach per-review aspect annotations. Those would be added later as a separate review-level analysis table rather than overloading `reviews`.
+The intended aggregation direction is:
+
+```text
+reviews + review_aspect_signals
+  -> grouped by business_id
+  -> restaurant_aspect_signals
+  -> LangGraph tools and answer generation
+```

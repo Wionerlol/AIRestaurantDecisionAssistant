@@ -34,7 +34,10 @@ Implemented tables:
 
 - `restaurants`
 - `reviews`
+- `review_aspect_signals`
 - `restaurant_aspect_signals`
+
+`review_aspect_signals` is intentionally a placeholder for static model outputs keyed by review ID. It is seeded with empty baseline rows so later pipelines can store review-level aspect and sentiment predictions without changing the retrieval schema.
 
 `restaurant_aspect_signals` is intentionally a placeholder precompute table for the next milestone. It already exists in the database and is seeded with baseline rows keyed by restaurant ID.
 

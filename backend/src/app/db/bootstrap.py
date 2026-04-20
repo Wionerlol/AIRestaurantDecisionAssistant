@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import Restaurant, RestaurantAspectSignal, Review
+from app.db.models import Restaurant, RestaurantAspectSignal, Review, ReviewAspectSignal
 from app.db.session import get_engine
 
 
@@ -24,6 +24,8 @@ def init_database() -> None:
 def seed_demo_data(session: Session) -> None:
     existing = session.scalar(select(Restaurant.business_id).limit(1))
     if existing is not None:
+        backfill_review_aspect_signals(session)
+        session.commit()
         return
 
     restaurants = []
@@ -81,7 +83,31 @@ def seed_demo_data(session: Session) -> None:
             )
 
     session.add_all(reviews)
+    session.flush()
+    backfill_review_aspect_signals(session)
     session.commit()
+
+
+def backfill_review_aspect_signals(session: Session) -> None:
+    missing_reviews = session.execute(
+        select(Review.review_id, Review.business_id)
+        .outerjoin(ReviewAspectSignal, Review.review_id == ReviewAspectSignal.review_id)
+        .where(ReviewAspectSignal.review_id.is_(None))
+    ).all()
+
+    review_aspects = [
+        ReviewAspectSignal(
+            review_id=review_id,
+            business_id=business_id,
+            aspect_sentiments={},
+            evidence_terms=[],
+            pros=[],
+            cons=[],
+            risk_flags=[],
+        )
+        for review_id, business_id in missing_reviews
+    ]
+    session.add_all(review_aspects)
 
 
 def _split_categories(value: str | None) -> list[str]:

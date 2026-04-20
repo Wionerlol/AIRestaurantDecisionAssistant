@@ -36,6 +36,10 @@ class Restaurant(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    review_aspect_signals: Mapped[list["ReviewAspectSignal"]] = relationship(
+        back_populates="restaurant",
+        cascade="all, delete-orphan",
+    )
 
 
 class Review(Base):
@@ -57,6 +61,56 @@ class Review(Base):
     review_date: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
 
     restaurant: Mapped[Restaurant] = relationship(back_populates="reviews")
+    aspect_signal: Mapped["ReviewAspectSignal | None"] = relationship(
+        back_populates="review",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class ReviewAspectSignal(Base):
+    __tablename__ = "review_aspect_signals"
+
+    review_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("reviews.review_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    business_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("restaurants.business_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    overall_sentiment_score: Mapped[float | None] = mapped_column(Float)
+    overall_sentiment_label: Mapped[str | None] = mapped_column(String(32))
+    food_score: Mapped[float | None] = mapped_column(Float)
+    service_score: Mapped[float | None] = mapped_column(Float)
+    price_score: Mapped[float | None] = mapped_column(Float)
+    ambience_score: Mapped[float | None] = mapped_column(Float)
+    waiting_time_score: Mapped[float | None] = mapped_column(Float)
+    aspect_sentiments: Mapped[dict[str, float | str | None]] = mapped_column(
+        JSON,
+        default=dict,
+        nullable=False,
+    )
+    evidence_terms: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    pros: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    cons: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    risk_flags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(128))
+    model_version: Mapped[str | None] = mapped_column(String(64))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=func.now(),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    review: Mapped[Review] = relationship(back_populates="aspect_signal")
+    restaurant: Mapped[Restaurant] = relationship(back_populates="review_aspect_signals")
 
 
 class RestaurantAspectSignal(Base):

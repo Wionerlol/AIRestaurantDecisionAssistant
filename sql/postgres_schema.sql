@@ -41,3 +41,26 @@ CREATE TABLE restaurant_aspect_signals (
     risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE review_aspect_signals (
+    review_id VARCHAR(32) PRIMARY KEY REFERENCES reviews (review_id) ON DELETE CASCADE,
+    business_id VARCHAR(32) NOT NULL REFERENCES restaurants (business_id) ON DELETE CASCADE,
+    overall_sentiment_score DOUBLE PRECISION,
+    overall_sentiment_label VARCHAR(32),
+    food_score DOUBLE PRECISION,
+    service_score DOUBLE PRECISION,
+    price_score DOUBLE PRECISION,
+    ambience_score DOUBLE PRECISION,
+    waiting_time_score DOUBLE PRECISION,
+    aspect_sentiments JSONB NOT NULL DEFAULT '{}'::jsonb,
+    evidence_terms JSONB NOT NULL DEFAULT '[]'::jsonb,
+    pros JSONB NOT NULL DEFAULT '[]'::jsonb,
+    cons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    model_name VARCHAR(128),
+    model_version VARCHAR(64),
+    confidence DOUBLE PRECISION,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_review_aspect_signals_business_id ON review_aspect_signals (business_id);

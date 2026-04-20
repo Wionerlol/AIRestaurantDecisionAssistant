@@ -1,19 +1,21 @@
 from app.schemas.chat import ChatRequest
 from app.services.intent_service import classify_intent
 from app.services.chat_service import build_chat_messages, build_graph_input, run_chat
+from app.agents.graph.graph import get_chat_graph
 
 
 def test_chat_returns_stub_response() -> None:
-    response = run_chat(
-        ChatRequest(messages=[{"role": "user", "content": "Hello graph"}])
-    )
+    response = run_chat(ChatRequest(messages=[{"role": "user", "content": "Hello graph"}]))
 
     assert response.provider == "stub"
     assert response.model == "stub-chat-model"
     assert response.message.role == "assistant"
     assert response.intent.category == "unknown"
     assert response.intent.label == "unsupported"
-    assert "Sorry, I can only help with a fixed set of restaurant questions right now." in response.message.content
+    assert (
+        "Sorry, I can only help with a fixed set of restaurant questions right now."
+        in response.message.content
+    )
     assert "Is this restaurant worth it?" in response.message.content
 
 
@@ -138,3 +140,55 @@ def test_supported_intent_still_uses_stub_model_response() -> None:
     assert response.intent.category == "aspect"
     assert response.intent.label == "food"
     assert response.message.content == "Stub reply: How is the food here?"
+
+
+def test_supported_intent_builds_tool_plan_and_decision_context() -> None:
+    result = get_chat_graph().invoke(
+        build_graph_input(
+            ChatRequest(
+                restaurant_context={
+                    "business_id": "restaurant-1",
+                    "name": "Demo Bistro",
+                    "city": "Philadelphia",
+                    "state": "PA",
+                    "stars": 4.5,
+                    "review_count": 120,
+                    "categories": ["Restaurants", "French"],
+                },
+                messages=[{"role": "user", "content": "Is it good for a date?"}],
+            )
+        )
+    )
+
+    assert result["intent_label"] == "date"
+    assert [tool_call["name"] for tool_call in result["tool_plan"]] == [
+        "get_restaurant_profile",
+        "get_scenario_fit",
+        "get_review_aspect_evidence",
+        "get_negative_review_patterns",
+    ]
+    assert result["tool_results"]["get_scenario_fit"]["args"] == {
+        "business_id": "restaurant-1",
+        "scenario": "date",
+    }
+    assert result["decision_context"]["restaurant"]["business_id"] == "restaurant-1"
+    assert result["decision_context"]["intent"] == {
+        "category": "scenario",
+        "label": "date",
+    }
+    assert result["answer_requirements"]["include_risk_warnings"] is True
+
+
+def test_unknown_intent_bypasses_restaurant_tool_nodes() -> None:
+    result = get_chat_graph().invoke(
+        build_graph_input(
+            ChatRequest(messages=[{"role": "user", "content": "Tell me something random"}])
+        )
+    )
+
+    assert result["intent_label"] == "unsupported"
+    assert "tool_plan" not in result
+    assert "decision_context" not in result
+    assert "Sorry, I can only help with a fixed set of restaurant questions right now." in (
+        result["messages"][-1].content
+    )

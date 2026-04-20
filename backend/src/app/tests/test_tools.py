@@ -58,6 +58,12 @@ from app.agents.tools.scenario_fit import (
     get_scenario_fit,
     get_scenario_fit_tool,
 )
+from app.agents.tools.supported_intents import (
+    SUPPORTED_INTENT_LABELS,
+    SupportedIntentsToolInput,
+    get_supported_intents,
+    get_supported_intents_tool,
+)
 from app.db.models import RestaurantAspectSignal, ReviewAspectSignal
 from app.db.session import reset_db_caches
 from app.services.restaurant_service import get_restaurant_reviews, list_restaurants
@@ -1165,4 +1171,64 @@ def test_get_decision_inputs_langchain_tool_invokes_database(
     assert result["data_sources"][0]["table"] == "restaurants"
     assert result["data_sources"][1]["table"] == "restaurant_aspect_signals"
     assert result["data_sources"][2]["table"] == "review_aspect_signals"
+    assert result["errors"] == []
+
+
+def test_get_supported_intents_returns_static_capabilities() -> None:
+    result = get_supported_intents(SupportedIntentsToolInput())
+
+    assert result.tool_name == "get_supported_intents"
+    assert result.status == "ok"
+    assert result.data.supported_categories == [
+        "recommendation",
+        "aspect",
+        "scenario",
+        "risk",
+        "summary",
+    ]
+    assert result.data.supported_labels == SUPPORTED_INTENT_LABELS
+    assert len(result.data.intents) == len(SUPPORTED_INTENT_LABELS)
+    assert result.data.intents[0].label == "worth_it"
+    assert result.data.intents[0].tool_plan == [
+        "get_restaurant_profile",
+        "get_restaurant_aspect_summary",
+        "get_positive_review_patterns",
+        "get_negative_review_patterns",
+        "get_decision_inputs",
+    ]
+    assert result.data.intents[0].requires_restaurant_context is True
+    assert "selected restaurant" in result.data.unsupported_guidance
+    assert result.errors == []
+
+
+def test_get_supported_intents_returns_source_metadata() -> None:
+    result = get_supported_intents()
+
+    assert len(result.data_sources) == 1
+    assert result.data_sources[0].table is None
+    assert result.data_sources[0].columns == []
+
+
+def test_get_supported_intents_langchain_tool_metadata() -> None:
+    assert get_supported_intents_tool.name == "get_supported_intents"
+    assert get_supported_intents_tool.args_schema is SupportedIntentsToolInput
+    assert "Supported intents:" in get_supported_intents_tool.description
+    assert "unknown: unsupported" in get_supported_intents_tool.description
+
+
+def test_get_supported_intents_langchain_tool_invokes_without_database() -> None:
+    result = get_supported_intents_tool.invoke({})
+
+    assert result["tool_name"] == "get_supported_intents"
+    assert result["status"] == "ok"
+    assert result["data"]["supported_labels"] == SUPPORTED_INTENT_LABELS
+    assert result["data"]["intents"][0]["label"] == "worth_it"
+    assert result["data"]["intents"][0]["tool_plan"] == [
+        "get_restaurant_profile",
+        "get_restaurant_aspect_summary",
+        "get_positive_review_patterns",
+        "get_negative_review_patterns",
+        "get_decision_inputs",
+    ]
+    assert result["data_sources"] == [{"table": None, "columns": []}]
     assert result["errors"] == []

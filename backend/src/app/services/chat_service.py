@@ -44,8 +44,19 @@ def _format_restaurant_context(restaurant: ChatRestaurantContext) -> str:
     )
 
 
+def build_graph_input(request: ChatRequest) -> dict:
+    restaurant = request.restaurant_context
+    return {
+        "messages": build_chat_messages(request),
+        "restaurant_business_id": restaurant.business_id if restaurant else None,
+        "restaurant_name": restaurant.name if restaurant else None,
+        "restaurant_city": restaurant.city if restaurant else None,
+        "restaurant_state": restaurant.state if restaurant else None,
+    }
+
+
 def run_chat(request: ChatRequest) -> ChatResponse:
-    result = get_chat_graph().invoke({"messages": build_chat_messages(request)})
+    result = get_chat_graph().invoke(build_graph_input(request))
     final_message = result["messages"][-1]
 
     return ChatResponse(

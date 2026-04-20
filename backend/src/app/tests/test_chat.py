@@ -1,6 +1,6 @@
 from app.schemas.chat import ChatRequest
 from app.services.intent_service import classify_intent
-from app.services.chat_service import build_chat_messages, run_chat
+from app.services.chat_service import build_chat_messages, build_graph_input, run_chat
 
 
 def test_chat_returns_stub_response() -> None:
@@ -79,6 +79,28 @@ def test_chat_response_preserves_restaurant_context() -> None:
     assert response.restaurant_context is not None
     assert response.restaurant_context.name == "Demo Bistro"
     assert response.restaurant_context.business_id == "restaurant-1"
+
+
+def test_graph_input_includes_restaurant_identity_fields() -> None:
+    graph_input = build_graph_input(
+        ChatRequest(
+            restaurant_context={
+                "business_id": "restaurant-1",
+                "name": "Demo Bistro",
+                "city": "Philadelphia",
+                "state": "PA",
+                "stars": 4.5,
+                "review_count": 120,
+                "categories": ["Restaurants", "French"],
+            },
+            messages=[{"role": "user", "content": "Should I go?"}],
+        )
+    )
+
+    assert graph_input["restaurant_business_id"] == "restaurant-1"
+    assert graph_input["restaurant_name"] == "Demo Bistro"
+    assert graph_input["restaurant_city"] == "Philadelphia"
+    assert graph_input["restaurant_state"] == "PA"
 
 
 def test_intent_classifier_detects_category_and_label_pairs() -> None:

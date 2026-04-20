@@ -167,3 +167,92 @@ Milestone 1 only needs reliable restaurant and review retrieval. The serving lay
 3. Returns restaurant summaries and review lists directly from those cached structures.
 
 This avoids premature database work while still meeting the milestone exit criterion.
+
+## Example Review-Centric Record
+
+The current database-backed structure in Milestone 2 can be understood from the perspective of one review.
+
+Example review from the demo subset:
+
+```json
+{
+  "review_id": "eSokG6KmGZN_9exB4dac3A",
+  "user_id": "_zEEc8nF7jtmzi_m8CYHug",
+  "business_id": "ytynqOUb3hjKeJfRj5Tshw",
+  "stars": 5.0,
+  "useful": 0,
+  "funny": 0,
+  "cool": 0,
+  "text": "I love it I played with my friends 24 hours and the food is bussin bussin you should try this",
+  "date": "2022-01-19 17:34:23"
+}
+```
+
+In the database, this review maps into the `reviews` table and links to the rest of the model like this:
+
+### 1. `reviews`
+
+Primary row:
+
+- `review_id`: `eSokG6KmGZN_9exB4dac3A`
+- `user_id`: `_zEEc8nF7jtmzi_m8CYHug`
+- `business_id`: `ytynqOUb3hjKeJfRj5Tshw`
+- `stars`: `5.0`
+- `text`: the full review text
+- `review_date`: `2022-01-19 17:34:23`
+
+### 2. `restaurants`
+
+The `business_id` foreign key points to this restaurant row:
+
+- `business_id`: `ytynqOUb3hjKeJfRj5Tshw`
+- `name`: `Reading Terminal Market`
+- `city`: `Philadelphia`
+- `state`: `PA`
+- `stars`: `4.5`
+- `review_count`: `5721`
+- `categories`: JSON array version of the source categories
+
+This is the main join path used by the current app:
+
+```sql
+SELECT r.review_id, r.text, r.stars, rt.name, rt.city, rt.state
+FROM reviews r
+JOIN restaurants rt ON r.business_id = rt.business_id
+WHERE r.review_id = 'eSokG6KmGZN_9exB4dac3A';
+```
+
+### 3. `restaurant_aspect_signals`
+
+The same `business_id` also links to the placeholder precomputed aspect table:
+
+- `business_id`: `ytynqOUb3hjKeJfRj5Tshw`
+- `overall_rating`: currently seeded from restaurant stars
+- `food_score`
+- `service_score`
+- `price_score`
+- `ambience_score`
+- `waiting_time_score`
+- `pros`
+- `cons`
+- `risk_flags`
+
+That means one review currently sits in this relationship chain:
+
+```text
+reviews.review_id
+  -> reviews.business_id
+  -> restaurants.business_id
+  -> restaurant_aspect_signals.business_id
+```
+
+### Practical meaning
+
+Using one review as the center point, the current structure already supports:
+
+- fetching the review text and metadata
+- knowing which restaurant the review belongs to
+- showing restaurant-level summary data next to the review
+- attaching future precomputed aspect/risk summaries at the restaurant level
+
+The current schema does not yet attach per-review aspect annotations. Those would be added later as a separate review-level analysis table rather than overloading `reviews`.

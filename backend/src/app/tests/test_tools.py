@@ -42,6 +42,14 @@ from app.agents.tools.review_aspect_evidence import (
     get_review_aspect_evidence,
     get_review_aspect_evidence_tool,
 )
+from app.agents.tools.scenario_fit import (
+    SCENARIO_FIT_RESTAURANT_COLUMNS,
+    SCENARIO_FIT_REVIEW_ASPECT_COLUMNS,
+    SCENARIO_FIT_REVIEW_COLUMNS,
+    ScenarioFitToolInput,
+    get_scenario_fit,
+    get_scenario_fit_tool,
+)
 from app.db.models import RestaurantAspectSignal, ReviewAspectSignal
 from app.db.session import reset_db_caches
 from app.services.restaurant_service import get_restaurant_reviews, list_restaurants
@@ -701,4 +709,207 @@ def test_get_recent_review_trend_langchain_tool_invokes_database(
     assert result["data"]["total"] == 2
     assert result["data_sources"][0]["table"] == "reviews"
     assert result["data_sources"][1]["table"] == "review_aspect_signals"
+    assert result["errors"] == []
+
+
+def test_get_scenario_fit_uses_restaurant_aspect_scores(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    assert restaurant_signal is not None
+
+    restaurant_signal.ambience_score = 4.5
+    restaurant_signal.service_score = 4.0
+    restaurant_signal.waiting_time_score = 3.5
+    restaurant_signal.price_score = 3.5
+    restaurant_signal.food_score = 4.0
+    restaurant_signal.risk_flags = []
+    db_session.commit()
+
+    result = get_scenario_fit(
+        db_session,
+        ScenarioFitToolInput(
+            business_id=restaurant.business_id,
+            scenario="date",
+            evidence_limit=2,
+        ),
+    )
+
+    assert result.tool_name == "get_scenario_fit"
+    assert result.status == "ok"
+    assert result.data.business_id == restaurant.business_id
+    assert result.data.scenario == "date"
+    assert result.data.fit_score == 4.025
+    assert result.data.fit_label == "good_fit"
+    assert result.data.aspect_scores == {
+        "ambience": 4.5,
+        "service": 4.0,
+        "waiting_time": 3.5,
+        "price": 3.5,
+        "food": 4.0,
+    }
+    assert result.data.coverage.used_restaurant_aspect_summary is True
+    assert result.data.coverage.used_review_aspect_fallback is False
+    assert result.errors == []
+
+
+def test_get_scenario_fit_falls_back_to_review_aspect_scores(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=2)
+    first_signal = db_session.get(ReviewAspectSignal, reviews[0].review_id)
+    second_signal = db_session.get(ReviewAspectSignal, reviews[1].review_id)
+    assert restaurant_signal is not None
+    assert first_signal is not None
+    assert second_signal is not None
+
+    restaurant_signal.waiting_time_score = None
+    restaurant_signal.service_score = None
+    restaurant_signal.price_score = None
+    restaurant_signal.food_score = None
+    first_signal.waiting_time_score = 4.0
+    first_signal.service_score = 3.0
+    first_signal.price_score = 5.0
+    first_signal.food_score = 4.0
+    second_signal.waiting_time_score = 2.0
+    second_signal.service_score = 5.0
+    second_signal.price_score = 3.0
+    second_signal.food_score = 2.0
+    db_session.commit()
+
+    result = get_scenario_fit(
+        db_session,
+        ScenarioFitToolInput(
+            business_id=restaurant.business_id,
+            scenario="quick_meal",
+            evidence_limit=2,
+        ),
+    )
+
+    assert result.status == "ok"
+    assert result.data.aspect_scores == {
+        "waiting_time": 3.0,
+        "service": 4.0,
+        "price": 4.0,
+        "food": 3.0,
+    }
+    assert result.data.fit_score == 3.45
+    assert result.data.fit_label == "mixed_fit"
+    assert result.data.coverage.used_review_aspect_fallback is True
+
+
+def test_get_scenario_fit_applies_relevant_risk_penalty(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    assert restaurant_signal is not None
+
+    restaurant_signal.ambience_score = 4.5
+    restaurant_signal.service_score = 4.5
+    restaurant_signal.waiting_time_score = 4.5
+    restaurant_signal.price_score = 4.5
+    restaurant_signal.food_score = 4.5
+    restaurant_signal.risk_flags = ["long wait", "crowded at dinner", "parking"]
+    db_session.commit()
+
+    result = get_scenario_fit(
+        db_session,
+        ScenarioFitToolInput(
+            business_id=restaurant.business_id,
+            scenario="date",
+            evidence_limit=1,
+        ),
+    )
+
+    assert result.status == "ok"
+    assert result.data.fit_score == 4.2
+    assert result.data.fit_label == "good_fit"
+    assert result.data.risk_penalty == 0.3
+    assert result.data.risk_flags == ["long wait", "crowded at dinner"]
+    assert "Relevant risk flags are present" in result.data.opposing_reasons
+
+
+def test_get_scenario_fit_returns_empty_for_missing_restaurant(
+    db_session: Session,
+) -> None:
+    result = get_scenario_fit(
+        db_session,
+        ScenarioFitToolInput(business_id="missing-restaurant", scenario="family"),
+    )
+
+    assert result.status == "empty"
+    assert result.data.business_id == "missing-restaurant"
+    assert result.data.scenario == "family"
+    assert result.data.fit_score is None
+    assert result.data.fit_label == "insufficient_data"
+    assert result.data.coverage.review_evidence_count == 0
+    assert result.data.positive_evidence == []
+    assert result.data.negative_evidence == []
+    assert result.errors == []
+
+
+def test_get_scenario_fit_returns_source_metadata(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    result = get_scenario_fit(
+        db_session,
+        ScenarioFitToolInput(business_id=restaurant.business_id, scenario="family"),
+    )
+
+    assert len(result.data_sources) == 3
+    assert result.data_sources[0].table == "restaurant_aspect_signals"
+    assert result.data_sources[0].columns == SCENARIO_FIT_RESTAURANT_COLUMNS
+    assert result.data_sources[1].table == "reviews"
+    assert result.data_sources[1].columns == SCENARIO_FIT_REVIEW_COLUMNS
+    assert result.data_sources[2].table == "review_aspect_signals"
+    assert result.data_sources[2].columns == SCENARIO_FIT_REVIEW_ASPECT_COLUMNS
+
+
+def test_get_scenario_fit_langchain_tool_metadata() -> None:
+    assert get_scenario_fit_tool.name == "get_scenario_fit"
+    assert get_scenario_fit_tool.args_schema is ScenarioFitToolInput
+    assert "Supported intents:" in get_scenario_fit_tool.description
+    assert "scenario: date, family, quick_meal" in get_scenario_fit_tool.description
+
+
+def test_get_scenario_fit_langchain_tool_invokes_database(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    assert restaurant_signal is not None
+
+    restaurant_signal.ambience_score = 4.0
+    restaurant_signal.service_score = 4.0
+    restaurant_signal.waiting_time_score = 4.0
+    restaurant_signal.price_score = 4.0
+    restaurant_signal.food_score = 4.0
+    db_session.commit()
+
+    reset_db_caches()
+    try:
+        result = get_scenario_fit_tool.invoke(
+            {
+                "business_id": restaurant.business_id,
+                "scenario": "date",
+                "evidence_limit": 1,
+            }
+        )
+    finally:
+        reset_db_caches()
+
+    assert result["tool_name"] == "get_scenario_fit"
+    assert result["status"] == "ok"
+    assert result["data"]["business_id"] == restaurant.business_id
+    assert result["data"]["scenario"] == "date"
+    assert result["data"]["fit_label"] == "good_fit"
+    assert result["data_sources"][0]["table"] == "restaurant_aspect_signals"
+    assert result["data_sources"][1]["table"] == "reviews"
+    assert result["data_sources"][2]["table"] == "review_aspect_signals"
     assert result["errors"] == []

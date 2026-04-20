@@ -1,5 +1,13 @@
 from sqlalchemy.orm import Session
 
+from app.agents.tools.decision_inputs import (
+    DECISION_INPUT_RESTAURANT_ASPECT_COLUMNS,
+    DECISION_INPUT_RESTAURANT_COLUMNS,
+    DECISION_INPUT_REVIEW_ASPECT_COLUMNS,
+    DecisionInputsToolInput,
+    get_decision_inputs,
+    get_decision_inputs_tool,
+)
 from app.agents.tools.negative_review_patterns import (
     NEGATIVE_RESTAURANT_ASPECT_COLUMNS,
     NEGATIVE_REVIEW_ASPECT_COLUMNS,
@@ -911,5 +919,250 @@ def test_get_scenario_fit_langchain_tool_invokes_database(
     assert result["data"]["fit_label"] == "good_fit"
     assert result["data_sources"][0]["table"] == "restaurant_aspect_signals"
     assert result["data_sources"][1]["table"] == "reviews"
+    assert result["data_sources"][2]["table"] == "review_aspect_signals"
+    assert result["errors"] == []
+
+
+def test_get_decision_inputs_builds_recommendation_context(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=2)
+    first_signal = db_session.get(ReviewAspectSignal, reviews[0].review_id)
+    second_signal = db_session.get(ReviewAspectSignal, reviews[1].review_id)
+    assert restaurant_signal is not None
+    assert first_signal is not None
+    assert second_signal is not None
+
+    restaurant_signal.overall_rating = 4.2
+    restaurant_signal.food_score = 4.6
+    restaurant_signal.service_score = 4.0
+    restaurant_signal.price_score = 3.6
+    restaurant_signal.ambience_score = 4.2
+    restaurant_signal.waiting_time_score = 3.8
+    restaurant_signal.pros = ["great food"]
+    restaurant_signal.cons = ["busy at peak"]
+    restaurant_signal.risk_flags = ["long wait"]
+    first_signal.overall_sentiment_label = "positive"
+    first_signal.overall_sentiment_score = 0.8
+    first_signal.pros = ["friendly service"]
+    first_signal.confidence = 0.9
+    second_signal.overall_sentiment_label = "negative"
+    second_signal.overall_sentiment_score = -0.2
+    second_signal.cons = ["busy at peak"]
+    second_signal.risk_flags = ["long wait"]
+    second_signal.confidence = 0.7
+    db_session.commit()
+
+    result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id=restaurant.business_id,
+            intent_label="worth_it",
+        ),
+    )
+
+    assert result.tool_name == "get_decision_inputs"
+    assert result.status == "ok"
+    assert result.data is not None
+    assert result.data.business_id == restaurant.business_id
+    assert result.data.intent_label == "worth_it"
+    assert result.data.restaurant.name == restaurant.name
+    assert result.data.aspect_scores == {
+        "food": 4.6,
+        "service": 4.0,
+        "price": 3.6,
+        "ambience": 4.2,
+        "waiting_time": 3.8,
+    }
+    assert result.data.average_aspect_score == 4.04
+    assert result.data.average_sentiment_score == 0.3
+    assert result.data.sentiment_label_counts == {"positive": 1, "negative": 1}
+    assert result.data.average_confidence == 0.8
+    assert result.data.decision_score == 3.669
+    assert result.data.decision_label == "worth_considering"
+    assert result.data.strengths == ["great food", "friendly service"]
+    assert result.data.weaknesses == ["busy at peak"]
+    assert result.data.risk_flags == ["long wait"]
+    assert result.data.penalties == {
+        "risk_flags": 0.15,
+        "weaknesses": 0.08,
+        "closed": 0.0,
+    }
+    assert result.data.coverage.has_profile is True
+    assert result.data.coverage.has_restaurant_aspect_summary is True
+    assert result.data.coverage.review_signal_count >= 2
+    assert result.errors == []
+
+
+def test_get_decision_inputs_falls_back_to_review_aspect_scores(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=2)
+    first_signal = db_session.get(ReviewAspectSignal, reviews[0].review_id)
+    second_signal = db_session.get(ReviewAspectSignal, reviews[1].review_id)
+    assert restaurant_signal is not None
+    assert first_signal is not None
+    assert second_signal is not None
+
+    restaurant_signal.food_score = None
+    restaurant_signal.service_score = None
+    restaurant_signal.price_score = None
+    restaurant_signal.ambience_score = None
+    restaurant_signal.waiting_time_score = None
+    first_signal.food_score = 4.0
+    first_signal.service_score = 3.0
+    first_signal.price_score = 5.0
+    first_signal.ambience_score = 4.0
+    first_signal.waiting_time_score = 2.0
+    second_signal.food_score = 2.0
+    second_signal.service_score = 5.0
+    second_signal.price_score = 3.0
+    second_signal.ambience_score = 2.0
+    second_signal.waiting_time_score = 4.0
+    db_session.commit()
+
+    result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id=restaurant.business_id,
+            intent_label="should_go",
+        ),
+    )
+
+    assert result.status == "ok"
+    assert result.data is not None
+    assert result.data.aspect_scores == {
+        "food": 3.0,
+        "service": 4.0,
+        "price": 4.0,
+        "ambience": 3.0,
+        "waiting_time": 3.0,
+    }
+    assert result.data.average_aspect_score == 3.4
+    assert result.data.decision_label in {
+        "should_go",
+        "consider_with_caution",
+        "skip",
+    }
+
+
+def test_get_decision_inputs_applies_should_go_risk_multiplier(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    assert restaurant_signal is not None
+
+    restaurant_signal.overall_rating = 4.5
+    restaurant_signal.food_score = 4.5
+    restaurant_signal.service_score = 4.5
+    restaurant_signal.price_score = 4.5
+    restaurant_signal.ambience_score = 4.5
+    restaurant_signal.waiting_time_score = 4.5
+    restaurant_signal.cons = ["slow service", "crowded room"]
+    restaurant_signal.risk_flags = ["long wait", "noisy", "expensive"]
+    db_session.commit()
+
+    worth_it_result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id=restaurant.business_id,
+            intent_label="worth_it",
+        ),
+    )
+    should_go_result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id=restaurant.business_id,
+            intent_label="should_go",
+        ),
+    )
+
+    assert worth_it_result.data is not None
+    assert should_go_result.data is not None
+    assert worth_it_result.data.penalties == {
+        "risk_flags": 0.45,
+        "weaknesses": 0.16,
+        "closed": 0.0,
+    }
+    assert should_go_result.data.penalties == {
+        "risk_flags": 0.517,
+        "weaknesses": 0.184,
+        "closed": 0.0,
+    }
+    assert should_go_result.data.decision_score < worth_it_result.data.decision_score
+
+
+def test_get_decision_inputs_returns_not_found_for_missing_restaurant(
+    db_session: Session,
+) -> None:
+    result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id="missing-restaurant",
+            intent_label="worth_it",
+        ),
+    )
+
+    assert result.status == "not_found"
+    assert result.data is None
+    assert result.errors == ["Restaurant not found: missing-restaurant"]
+
+
+def test_get_decision_inputs_returns_source_metadata(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    result = get_decision_inputs(
+        db_session,
+        DecisionInputsToolInput(
+            business_id=restaurant.business_id,
+            intent_label="worth_it",
+        ),
+    )
+
+    assert len(result.data_sources) == 3
+    assert result.data_sources[0].table == "restaurants"
+    assert result.data_sources[0].columns == DECISION_INPUT_RESTAURANT_COLUMNS
+    assert result.data_sources[1].table == "restaurant_aspect_signals"
+    assert result.data_sources[1].columns == DECISION_INPUT_RESTAURANT_ASPECT_COLUMNS
+    assert result.data_sources[2].table == "review_aspect_signals"
+    assert result.data_sources[2].columns == DECISION_INPUT_REVIEW_ASPECT_COLUMNS
+
+
+def test_get_decision_inputs_langchain_tool_metadata() -> None:
+    assert get_decision_inputs_tool.name == "get_decision_inputs"
+    assert get_decision_inputs_tool.args_schema is DecisionInputsToolInput
+    assert "Supported intents:" in get_decision_inputs_tool.description
+    assert "recommendation: worth_it, should_go" in get_decision_inputs_tool.description
+
+
+def test_get_decision_inputs_langchain_tool_invokes_database(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    reset_db_caches()
+    try:
+        result = get_decision_inputs_tool.invoke(
+            {
+                "business_id": restaurant.business_id,
+                "intent_label": "worth_it",
+            }
+        )
+    finally:
+        reset_db_caches()
+
+    assert result["tool_name"] == "get_decision_inputs"
+    assert result["status"] == "ok"
+    assert result["data"]["business_id"] == restaurant.business_id
+    assert result["data"]["intent_label"] == "worth_it"
+    assert result["data_sources"][0]["table"] == "restaurants"
+    assert result["data_sources"][1]["table"] == "restaurant_aspect_signals"
     assert result["data_sources"][2]["table"] == "review_aspect_signals"
     assert result["errors"] == []

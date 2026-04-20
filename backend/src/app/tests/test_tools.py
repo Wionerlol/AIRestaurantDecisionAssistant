@@ -8,6 +8,14 @@ from app.agents.tools.negative_review_patterns import (
     get_negative_review_patterns,
     get_negative_review_patterns_tool,
 )
+from app.agents.tools.positive_review_patterns import (
+    POSITIVE_RESTAURANT_ASPECT_COLUMNS,
+    POSITIVE_REVIEW_ASPECT_COLUMNS,
+    POSITIVE_REVIEW_COLUMNS,
+    PositiveReviewPatternsToolInput,
+    get_positive_review_patterns,
+    get_positive_review_patterns_tool,
+)
 from app.agents.tools.restaurant_aspect_summary import (
     RESTAURANT_ASPECT_SUMMARY_COLUMNS,
     RestaurantAspectSummaryToolInput,
@@ -423,6 +431,128 @@ def test_get_negative_review_patterns_langchain_tool_invokes_database(
     assert result["data"]["business_id"] == restaurant.business_id
     assert result["data"]["total"] == 1
     assert "cold food" in result["data"]["top_cons"]
+    assert result["data_sources"][0]["table"] == "reviews"
+    assert result["data_sources"][1]["table"] == "review_aspect_signals"
+    assert result["data_sources"][2]["table"] == "restaurant_aspect_signals"
+    assert result["errors"] == []
+
+
+def test_get_positive_review_patterns_returns_common_strengths(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    reviews = get_restaurant_reviews(db_session, restaurant.business_id, limit=2)
+    first_signal = db_session.get(ReviewAspectSignal, reviews[0].review_id)
+    second_signal = db_session.get(ReviewAspectSignal, reviews[1].review_id)
+    restaurant_signal = db_session.get(RestaurantAspectSignal, restaurant.business_id)
+    assert first_signal is not None
+    assert second_signal is not None
+    assert restaurant_signal is not None
+
+    first_signal.overall_sentiment_label = "positive"
+    first_signal.overall_sentiment_score = 0.8
+    first_signal.food_score = 4.6
+    first_signal.evidence_terms = ["fresh", "flavorful"]
+    first_signal.pros = ["great food"]
+    first_signal.confidence = 0.95
+    second_signal.pros = ["great food"]
+    second_signal.evidence_terms = ["friendly"]
+    restaurant_signal.pros = ["popular dishes"]
+    db_session.commit()
+
+    result = get_positive_review_patterns(
+        db_session,
+        PositiveReviewPatternsToolInput(
+            business_id=restaurant.business_id,
+            aspect="food",
+            limit=2,
+        ),
+    )
+
+    assert result.tool_name == "get_positive_review_patterns"
+    assert result.status == "ok"
+    assert result.data.business_id == restaurant.business_id
+    assert result.data.aspect == "food"
+    assert result.data.total == 2
+    assert "great food" in result.data.top_pros
+    assert "popular dishes" in result.data.top_pros
+    assert "fresh" in result.data.top_evidence_terms
+    assert result.data.items[0].selected_aspect_score == 4.6
+    assert "positive sentiment label" in result.data.items[0].positive_reasons
+    assert "high selected aspect score" in result.data.items[0].positive_reasons
+    assert result.errors == []
+
+
+def test_get_positive_review_patterns_returns_empty_for_missing_restaurant(
+    db_session: Session,
+) -> None:
+    result = get_positive_review_patterns(
+        db_session,
+        PositiveReviewPatternsToolInput(business_id="missing-restaurant"),
+    )
+
+    assert result.status == "empty"
+    assert result.data.business_id == "missing-restaurant"
+    assert result.data.total == 0
+    assert result.data.top_pros == []
+    assert result.data.items == []
+    assert result.errors == []
+
+
+def test_get_positive_review_patterns_returns_source_metadata(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
+    result = get_positive_review_patterns(
+        db_session,
+        PositiveReviewPatternsToolInput(business_id=restaurant.business_id, limit=1),
+    )
+
+    assert len(result.data_sources) == 3
+    assert result.data_sources[0].table == "reviews"
+    assert result.data_sources[0].columns == POSITIVE_REVIEW_COLUMNS
+    assert result.data_sources[1].table == "review_aspect_signals"
+    assert result.data_sources[1].columns == POSITIVE_REVIEW_ASPECT_COLUMNS
+    assert result.data_sources[2].table == "restaurant_aspect_signals"
+    assert result.data_sources[2].columns == POSITIVE_RESTAURANT_ASPECT_COLUMNS
+
+
+def test_get_positive_review_patterns_langchain_tool_metadata() -> None:
+    assert get_positive_review_patterns_tool.name == "get_positive_review_patterns"
+    assert get_positive_review_patterns_tool.args_schema is PositiveReviewPatternsToolInput
+    assert "Supported intents:" in get_positive_review_patterns_tool.description
+    assert "review_aspect_signals" in get_positive_review_patterns_tool.description
+
+
+def test_get_positive_review_patterns_langchain_tool_invokes_database(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+    review = get_restaurant_reviews(db_session, restaurant.business_id, limit=1)[0]
+    signal = db_session.get(ReviewAspectSignal, review.review_id)
+    assert signal is not None
+
+    signal.overall_sentiment_label = "positive"
+    signal.pros = ["excellent service"]
+    db_session.commit()
+
+    reset_db_caches()
+    try:
+        result = get_positive_review_patterns_tool.invoke(
+            {
+                "business_id": restaurant.business_id,
+                "limit": 1,
+            }
+        )
+    finally:
+        reset_db_caches()
+
+    assert result["tool_name"] == "get_positive_review_patterns"
+    assert result["status"] == "ok"
+    assert result["data"]["business_id"] == restaurant.business_id
+    assert result["data"]["total"] == 1
+    assert "excellent service" in result["data"]["top_pros"]
     assert result["data_sources"][0]["table"] == "reviews"
     assert result["data_sources"][1]["table"] == "review_aspect_signals"
     assert result["data_sources"][2]["table"] == "restaurant_aspect_signals"

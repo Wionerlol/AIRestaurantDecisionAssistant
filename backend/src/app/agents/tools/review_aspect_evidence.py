@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.agents.tools.review_evidence_scoring import (
+    ReviewEvidenceScoringConfig,
+    build_candidate_from_review_signal,
+    score_review_evidence,
+)
 from app.db.models import Review, ReviewAspectSignal
 from app.db.session import get_session_factory
 
@@ -101,6 +106,8 @@ class ReviewAspectEvidenceItem(BaseModel):
     pros: list[str]
     cons: list[str]
     risk_flags: list[str]
+    relevance_score: float | None = None
+    matched_keywords: list[str] = Field(default_factory=list)
     model_name: str | None = None
     model_version: str | None = None
     confidence: float | None = None
@@ -193,14 +200,17 @@ def get_review_aspect_evidence(
     3. Restrict rows to the selected `business_id`.
     4. If `sentiment` is provided, filter by
        `review_aspect_signals.overall_sentiment_label`.
-    5. Sort deterministically by review recency and review ID.
-    6. Return bounded evidence rows with all aspect scores and selected aspect
-       scores separated for easier downstream prompting.
+    5. Score candidates with the shared review evidence scorer using sentiment,
+       selected aspect weights, confidence, recency, and stars.
+    6. Return bounded evidence rows with all aspect scores, selected aspect
+       scores, relevance score, and matched keywords separated for easier
+       downstream prompting.
 
     Output:
     - status: `ok` when one or more rows are returned, otherwise `empty`.
     - data.total: number of returned evidence rows.
-    - data.items: review-level evidence objects.
+    - data.items: review-level evidence objects with relevance score and
+      matched keywords.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 
@@ -219,7 +229,7 @@ def get_review_aspect_evidence(
         .join(ReviewAspectSignal, Review.review_id == ReviewAspectSignal.review_id)
         .where(Review.business_id == tool_input.business_id)
         .order_by(desc(Review.review_date), Review.review_id)
-        .limit(tool_input.limit)
+        .limit(max(tool_input.limit * 5, tool_input.limit))
     )
 
     if tool_input.sentiment is not None:
@@ -228,7 +238,21 @@ def get_review_aspect_evidence(
         )
 
     rows = session.execute(statement).all()
-    items = [_build_evidence_item(review, signal, tool_input.aspects) for review, signal in rows]
+    row_by_review_id = {review.review_id: (review, signal) for review, signal in rows}
+    candidates = [build_candidate_from_review_signal(review, signal) for review, signal in rows]
+    scored_items = score_review_evidence(
+        candidates,
+        _scoring_config(tool_input),
+    )
+    items = [
+        _build_evidence_item(
+            *row_by_review_id[scored.candidate.review_id],
+            selected_aspects=tool_input.aspects,
+            relevance_score=scored.score,
+            matched_keywords=scored.matched_keywords,
+        )
+        for scored in scored_items
+    ]
     status: Literal["ok", "empty"] = "ok" if items else "empty"
 
     return ReviewAspectEvidenceToolOutput(
@@ -246,6 +270,8 @@ def _build_evidence_item(
     review: Review,
     signal: ReviewAspectSignal,
     selected_aspects: list[AspectName],
+    relevance_score: float | None = None,
+    matched_keywords: list[str] | None = None,
 ) -> ReviewAspectEvidenceItem:
     aspect_scores = {
         aspect: getattr(signal, score_field) for aspect, score_field in ASPECT_SCORE_FIELDS.items()
@@ -269,9 +295,31 @@ def _build_evidence_item(
         pros=signal.pros,
         cons=signal.cons,
         risk_flags=signal.risk_flags,
+        relevance_score=relevance_score,
+        matched_keywords=matched_keywords or [],
         model_name=signal.model_name,
         model_version=signal.model_version,
         confidence=signal.confidence,
+    )
+
+
+def _scoring_config(tool_input: ReviewAspectEvidenceToolInput) -> ReviewEvidenceScoringConfig:
+    aspect_weights = {aspect: 1.0 for aspect in tool_input.aspects} if tool_input.aspects else {}
+    star_preference = "none"
+    aspect_direction = "absolute"
+    if tool_input.sentiment == "positive":
+        star_preference = "high"
+        aspect_direction = "positive"
+    elif tool_input.sentiment == "negative":
+        star_preference = "low"
+        aspect_direction = "negative"
+
+    return ReviewEvidenceScoringConfig(
+        aspect_weights=aspect_weights,
+        aspect_direction=aspect_direction,
+        sentiment_target=tool_input.sentiment,
+        star_preference=star_preference,
+        limit=tool_input.limit,
     )
 
 
@@ -339,7 +387,8 @@ def get_review_aspect_evidence_tool(
     2. Open a SQLAlchemy session using the configured application database.
     3. Join `reviews` with `review_aspect_signals`.
     4. Apply the selected restaurant and optional sentiment filters.
-    5. Return bounded review evidence sorted by recency and review ID.
+    5. Score candidates with the shared review evidence scorer.
+    6. Return bounded review evidence sorted by relevance score.
 
     Output:
     - tool_name: get_review_aspect_evidence.
@@ -347,7 +396,7 @@ def get_review_aspect_evidence_tool(
     - data.total: number of returned evidence rows.
     - data.items: review evidence objects with review text, sentiment, aspect
       scores, selected aspect scores, evidence terms, pros, cons, risk flags,
-      model metadata, and confidence.
+      relevance score, matched keywords, model metadata, and confidence.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 

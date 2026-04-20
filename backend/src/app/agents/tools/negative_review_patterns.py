@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.agents.tools.review_evidence_scoring import (
+    ReviewEvidenceScoringConfig,
+    build_candidate_from_review_signal,
+    score_review_evidence,
+)
 from app.db.models import RestaurantAspectSignal, Review, ReviewAspectSignal
 from app.db.session import get_session_factory
 
@@ -59,6 +64,19 @@ NEGATIVE_RESTAURANT_ASPECT_COLUMNS = [
     "updated_at",
 ]
 
+NEGATIVE_KEYWORDS = [
+    "bad",
+    "slow",
+    "rude",
+    "expensive",
+    "dirty",
+    "crowded",
+    "noisy",
+    "long wait",
+    "cold",
+    "wrong order",
+]
+
 
 class NegativeReviewPatternsToolInput(BaseModel):
     """Input for `get_negative_review_patterns`."""
@@ -91,6 +109,8 @@ class NegativeReviewEvidenceItem(BaseModel):
     evidence_terms: list[str]
     cons: list[str]
     risk_flags: list[str]
+    relevance_score: float | None = None
+    matched_keywords: list[str] = Field(default_factory=list)
     confidence: float | None = None
     negative_reasons: list[str]
 
@@ -177,8 +197,9 @@ def get_negative_review_patterns(
     5. Identify negative evidence in Python using any of these signals:
        negative sentiment label, low overall sentiment score, low selected
        aspect score, low Yelp stars, non-empty cons, or non-empty risk flags.
-    6. Rank representative reviews by strongest negative evidence, confidence,
-       and recency.
+    6. Rank representative reviews with the shared review evidence scorer using
+       negative keywords, negative sentiment, low aspect scores, confidence,
+       recency, and low stars.
     7. Aggregate top cons, risk flags, and evidence terms from review-level and
        restaurant-level signals.
 
@@ -187,7 +208,8 @@ def get_negative_review_patterns(
     - data.top_cons: most common negative themes.
     - data.top_risk_flags: most common risk flags.
     - data.top_evidence_terms: common negative evidence terms.
-    - data.items: representative negative review evidence.
+    - data.items: representative negative review evidence with relevance score
+      and matched keywords.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 
@@ -214,19 +236,30 @@ def get_negative_review_patterns(
         .limit(max(tool_input.limit * 5, tool_input.limit))
     ).all()
 
+    negative_items_by_review_id = {
+        item.review_id: item
+        for item in [
+            _build_negative_item(review, signal, tool_input.aspect) for review, signal in rows
+        ]
+        if item.negative_reasons
+    }
     candidates = [
-        _build_negative_item(review, signal, tool_input.aspect) for review, signal in rows
+        build_candidate_from_review_signal(review, signal)
+        for review, signal in rows
+        if review.review_id in negative_items_by_review_id
     ]
-    negative_items = [item for item in candidates if item.negative_reasons]
-    negative_items.sort(
-        key=lambda item: (
-            len(item.negative_reasons),
-            item.confidence or 0,
-            item.review_date,
-        ),
-        reverse=True,
+    scored_items = score_review_evidence(
+        candidates,
+        _scoring_config(tool_input),
     )
-    negative_items = negative_items[: tool_input.limit]
+    negative_items = [
+        _with_score_metadata(
+            negative_items_by_review_id[scored.candidate.review_id],
+            scored.score,
+            scored.matched_keywords,
+        )
+        for scored in scored_items
+    ]
 
     restaurant_level_cons = restaurant_signal.cons if restaurant_signal else []
     restaurant_level_risk_flags = restaurant_signal.risk_flags if restaurant_signal else []
@@ -320,6 +353,37 @@ def _most_common(values: list[str], limit: int = 8) -> list[str]:
     return [value for value, _ in Counter(values).most_common(limit)]
 
 
+def _scoring_config(
+    tool_input: NegativeReviewPatternsToolInput,
+) -> ReviewEvidenceScoringConfig:
+    aspect_weights = (
+        {tool_input.aspect: 1.0}
+        if tool_input.aspect is not None
+        else {aspect: 1.0 for aspect in ASPECT_SCORE_FIELDS}
+    )
+    return ReviewEvidenceScoringConfig(
+        aspect_weights=aspect_weights,
+        aspect_direction="negative",
+        negative_keywords=NEGATIVE_KEYWORDS,
+        sentiment_target="negative",
+        star_preference="low",
+        limit=tool_input.limit,
+    )
+
+
+def _with_score_metadata(
+    item: NegativeReviewEvidenceItem,
+    relevance_score: float,
+    matched_keywords: list[str],
+) -> NegativeReviewEvidenceItem:
+    return item.model_copy(
+        update={
+            "relevance_score": relevance_score,
+            "matched_keywords": matched_keywords,
+        }
+    )
+
+
 @tool(
     "get_negative_review_patterns",
     args_schema=NegativeReviewPatternsToolInput,
@@ -365,7 +429,8 @@ def get_negative_review_patterns_tool(
     4. Join `reviews` with `review_aspect_signals`.
     5. Identify negative review evidence from sentiment, low scores, low stars,
        cons, and risk flags.
-    6. Return top complaint themes, risk flags, evidence terms, and bounded
+    6. Rank candidates with the shared review evidence scorer.
+    7. Return top complaint themes, risk flags, evidence terms, and bounded
        representative negative reviews.
 
     Output:
@@ -374,7 +439,8 @@ def get_negative_review_patterns_tool(
     - data.top_cons: common negative themes.
     - data.top_risk_flags: common risk flags.
     - data.top_evidence_terms: common negative evidence terms.
-    - data.items: representative negative review evidence.
+    - data.items: representative negative review evidence with relevance score
+      and matched keywords.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 

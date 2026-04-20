@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.agents.tools.review_evidence_scoring import (
+    ReviewEvidenceScoringConfig,
+    build_candidate_from_review_signal,
+    score_review_evidence,
+)
 from app.db.models import RestaurantAspectSignal, Review, ReviewAspectSignal
 from app.db.session import get_session_factory
 
@@ -57,6 +62,19 @@ POSITIVE_RESTAURANT_ASPECT_COLUMNS = [
     "updated_at",
 ]
 
+POSITIVE_KEYWORDS = [
+    "great",
+    "good",
+    "excellent",
+    "friendly",
+    "fresh",
+    "flavorful",
+    "quick",
+    "cozy",
+    "quiet",
+    "reasonable",
+]
+
 
 class PositiveReviewPatternsToolInput(BaseModel):
     """Input for `get_positive_review_patterns`."""
@@ -88,6 +106,8 @@ class PositiveReviewEvidenceItem(BaseModel):
     selected_aspect_score: float | None = None
     evidence_terms: list[str]
     pros: list[str]
+    relevance_score: float | None = None
+    matched_keywords: list[str] = Field(default_factory=list)
     confidence: float | None = None
     positive_reasons: list[str]
 
@@ -167,8 +187,9 @@ def get_positive_review_patterns(
     5. Identify positive evidence in Python using any of these signals:
        positive sentiment label, high overall sentiment score, high selected
        aspect score, high Yelp stars, or non-empty pros.
-    6. Rank representative reviews by strongest positive evidence, confidence,
-       and recency.
+    6. Rank representative reviews with the shared review evidence scorer using
+       positive keywords, positive sentiment, high aspect scores, confidence,
+       recency, and high stars.
     7. Aggregate top pros and evidence terms from review-level and
        restaurant-level signals.
 
@@ -176,7 +197,8 @@ def get_positive_review_patterns(
     - status: `ok` when positive patterns or evidence exist, otherwise `empty`.
     - data.top_pros: most common positive themes.
     - data.top_evidence_terms: common positive evidence terms.
-    - data.items: representative positive review evidence.
+    - data.items: representative positive review evidence with relevance score
+      and matched keywords.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 
@@ -203,19 +225,30 @@ def get_positive_review_patterns(
         .limit(max(tool_input.limit * 5, tool_input.limit))
     ).all()
 
+    positive_items_by_review_id = {
+        item.review_id: item
+        for item in [
+            _build_positive_item(review, signal, tool_input.aspect) for review, signal in rows
+        ]
+        if item.positive_reasons
+    }
     candidates = [
-        _build_positive_item(review, signal, tool_input.aspect) for review, signal in rows
+        build_candidate_from_review_signal(review, signal)
+        for review, signal in rows
+        if review.review_id in positive_items_by_review_id
     ]
-    positive_items = [item for item in candidates if item.positive_reasons]
-    positive_items.sort(
-        key=lambda item: (
-            len(item.positive_reasons),
-            item.confidence or 0,
-            item.review_date,
-        ),
-        reverse=True,
+    scored_items = score_review_evidence(
+        candidates,
+        _scoring_config(tool_input),
     )
-    positive_items = positive_items[: tool_input.limit]
+    positive_items = [
+        _with_score_metadata(
+            positive_items_by_review_id[scored.candidate.review_id],
+            scored.score,
+            scored.matched_keywords,
+        )
+        for scored in scored_items
+    ]
 
     restaurant_level_pros = restaurant_signal.pros if restaurant_signal else []
     top_pros = _most_common(
@@ -299,6 +332,37 @@ def _most_common(values: list[str], limit: int = 8) -> list[str]:
     return [value for value, _ in Counter(values).most_common(limit)]
 
 
+def _scoring_config(
+    tool_input: PositiveReviewPatternsToolInput,
+) -> ReviewEvidenceScoringConfig:
+    aspect_weights = (
+        {tool_input.aspect: 1.0}
+        if tool_input.aspect is not None
+        else {aspect: 1.0 for aspect in ASPECT_SCORE_FIELDS}
+    )
+    return ReviewEvidenceScoringConfig(
+        aspect_weights=aspect_weights,
+        aspect_direction="positive",
+        positive_keywords=POSITIVE_KEYWORDS,
+        sentiment_target="positive",
+        star_preference="high",
+        limit=tool_input.limit,
+    )
+
+
+def _with_score_metadata(
+    item: PositiveReviewEvidenceItem,
+    relevance_score: float,
+    matched_keywords: list[str],
+) -> PositiveReviewEvidenceItem:
+    return item.model_copy(
+        update={
+            "relevance_score": relevance_score,
+            "matched_keywords": matched_keywords,
+        }
+    )
+
+
 @tool(
     "get_positive_review_patterns",
     args_schema=PositiveReviewPatternsToolInput,
@@ -342,7 +406,8 @@ def get_positive_review_patterns_tool(
     4. Join `reviews` with `review_aspect_signals`.
     5. Identify positive review evidence from sentiment, high scores, high
        stars, and pros.
-    6. Return top positive themes, evidence terms, and bounded representative
+    6. Rank candidates with the shared review evidence scorer.
+    7. Return top positive themes, evidence terms, and bounded representative
        positive reviews.
 
     Output:
@@ -350,7 +415,8 @@ def get_positive_review_patterns_tool(
     - status: ok or empty.
     - data.top_pros: common positive themes.
     - data.top_evidence_terms: common positive evidence terms.
-    - data.items: representative positive review evidence.
+    - data.items: representative positive review evidence with relevance score
+      and matched keywords.
     - data_sources: table and column metadata for traceability.
     - errors: recoverable tool errors, empty on success.
 

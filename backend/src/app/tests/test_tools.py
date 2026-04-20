@@ -243,6 +243,8 @@ def test_get_review_aspect_evidence_includes_selected_aspect_scores(
         "food": None,
         "service": None,
     }
+    assert result.data.items[0].relevance_score is not None
+    assert result.data.items[0].matched_keywords == []
 
 
 def test_get_review_aspect_evidence_returns_empty_when_filter_has_no_matches(
@@ -361,6 +363,8 @@ def test_get_negative_review_patterns_returns_common_complaints(
     assert "busy at peak hours" in result.data.top_risk_flags
     assert "slow" in result.data.top_evidence_terms
     assert result.data.items[0].selected_aspect_score == 1.2
+    assert result.data.items[0].relevance_score is not None
+    assert "slow" in result.data.items[0].matched_keywords
     assert "negative sentiment label" in result.data.items[0].negative_reasons
     assert "low selected aspect score" in result.data.items[0].negative_reasons
     assert result.errors == []
@@ -485,6 +489,8 @@ def test_get_positive_review_patterns_returns_common_strengths(
     assert "popular dishes" in result.data.top_pros
     assert "fresh" in result.data.top_evidence_terms
     assert result.data.items[0].selected_aspect_score == 4.6
+    assert result.data.items[0].relevance_score is not None
+    assert "fresh" in result.data.items[0].matched_keywords
     assert "positive sentiment label" in result.data.items[0].positive_reasons
     assert "high selected aspect score" in result.data.items[0].positive_reasons
     assert result.errors == []

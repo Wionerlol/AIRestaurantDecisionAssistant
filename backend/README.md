@@ -1,6 +1,6 @@
 # Backend
 
-Python 3.12 FastAPI service backed by SQLAlchemy and PostgreSQL.
+Python 3.12 FastAPI service backed by SQLAlchemy and SQLite.
 
 Current endpoints:
 
@@ -26,10 +26,12 @@ Default local database URL:
 sqlite:///./backend/data/app.db
 ```
 
-To use PostgreSQL locally:
+SQLite is the expected database for this phase. PostgreSQL and `pgvector` are intentionally not required because the project does not currently use RAG or vector search.
+
+To rebuild the local restaurant/review sample from the Yelp academic dataset:
 
 ```bash
-export DATABASE_URL=postgresql+psycopg://app:app@localhost:5432/restaurant_decision
+python3 scripts/build_sample_dataset.py
 ```
 
 To use OpenAI for chat:
@@ -48,6 +50,6 @@ From repository root:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-The backend will create tables and seed demo data on startup when `DATABASE_AUTO_SEED=true`.
+Docker Compose uses SQLite at `/app/backend/data/app.db` and bind-mounts the repository `backend/data` directory into the backend container. The backend will create tables and seed data on startup when `DATABASE_AUTO_SEED=true`.
 
 For local development and tests, chat defaults to the `stub` provider so no external LLM key is required.

@@ -18,16 +18,20 @@ Monorepo for an AI restaurant assistant. The current backend state focuses on tw
 
 ### 1. Database
 
-Use Docker Compose to start PostgreSQL:
+The project uses SQLite for the current stage. PostgreSQL / `pgvector` is not required because the current system is database-backed structured retrieval, not RAG.
+
+Default local database connection:
 
 ```bash
-docker compose -f docker/docker-compose.yml up postgres -d
+sqlite:///./backend/data/app.db
 ```
 
-Default database connection:
+The backend creates tables and seeds data on startup when `DATABASE_AUTO_SEED=true`. The working data files live under `backend/data/`, which is ignored by Git because the expanded local dataset is large.
+
+To rebuild the local restaurant/review sample from the Yelp academic dataset:
 
 ```bash
-postgresql+psycopg://app:app@localhost:5432/restaurant_decision
+python3 scripts/build_sample_dataset.py
 ```
 
 ### 2. Backend
@@ -44,6 +48,7 @@ Start the FastAPI server:
 
 ```bash
 cp .env.example .env
+export DATABASE_URL=sqlite:///./backend/data/app.db
 backend/.venv/bin/uvicorn app.main:app --app-dir backend/src --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -81,8 +86,11 @@ Frontend default URL: `http://localhost:3000`
 make docker-up
 ```
 
+Docker Compose also uses SQLite and bind-mounts `backend/data` into the backend container. It does not start PostgreSQL.
+
 ## Notes
 
 - The backend exposes health, restaurant data, and chat endpoints.
 - The frontend is still a shell; restaurant-specific business workflows are intentionally deferred.
 - The current chat runtime is provider-pluggable and defaults to a local `stub` provider for development and tests.
+- SQLite is the expected database for this phase; PostgreSQL and vector search can be reconsidered only if RAG or embedding search becomes necessary later.

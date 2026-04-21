@@ -1,22 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    env_file:
-      - ../.env
-    environment:
-      POSTGRES_DB: "${POSTGRES_DB:-restaurant_decision}"
-      POSTGRES_USER: "${POSTGRES_USER:-app}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-app}"
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-restaurant_decision}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
   backend:
     build:
       context: ..
@@ -25,7 +7,7 @@ services:
       - ../.env
     environment:
       APP_ENV: "docker"
-      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-restaurant_decision}"
+      DATABASE_URL: "${DATABASE_URL:-sqlite:////app/backend/data/app.db}"
       DATABASE_AUTO_SEED: "${DATABASE_AUTO_SEED:-true}"
       BACKEND_HOST: "${BACKEND_HOST:-0.0.0.0}"
       BACKEND_PORT: "${BACKEND_PORT:-8000}"
@@ -40,9 +22,8 @@ services:
       STUB_LLM_DEFAULT_REPLY: "${STUB_LLM_DEFAULT_REPLY:-Hello from the stub model.}"
     ports:
       - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - ../backend/data:/app/backend/data
 
   frontend:
     build:
@@ -54,6 +35,3 @@ services:
       - "${FRONTEND_PORT:-3000}:${FRONTEND_PORT:-3000}"
     depends_on:
       - backend
-
-volumes:
-  postgres_data:

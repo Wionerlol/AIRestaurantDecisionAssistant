@@ -1,6 +1,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.bootstrap import seed_demo_data
 from app.db.models import Restaurant, RestaurantAspectSignal, Review, ReviewAspectSignal
 from app.services.restaurant_service import (
@@ -16,10 +17,18 @@ def test_database_seed_creates_restaurants_reviews_and_aspects(db_session: Sessi
     aspect_count = db_session.scalar(select(func.count()).select_from(RestaurantAspectSignal))
     review_aspect_count = db_session.scalar(select(func.count()).select_from(ReviewAspectSignal))
 
-    assert restaurant_count == 60
-    assert review_count == 4800
-    assert aspect_count == 60
-    assert review_aspect_count == 4800
+    expected_restaurants = _count_jsonl_rows(settings.sample_businesses_file)
+    expected_reviews = _count_jsonl_rows(settings.sample_reviews_file)
+
+    assert restaurant_count == expected_restaurants
+    assert review_count == expected_reviews
+    assert aspect_count == expected_restaurants
+    assert review_aspect_count == expected_reviews
+
+
+def _count_jsonl_rows(path) -> int:
+    with path.open("r", encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
 
 
 def test_list_restaurants_returns_seeded_data(db_session: Session) -> None:

@@ -1,7 +1,10 @@
-from app.schemas.chat import ChatRequest
-from app.services.intent_service import classify_intent
-from app.services.chat_service import build_chat_messages, build_graph_input, run_chat
+from sqlalchemy.orm import Session
+
 from app.agents.graph.graph import get_chat_graph
+from app.schemas.chat import ChatRequest
+from app.services.chat_service import build_chat_messages, build_graph_input, run_chat
+from app.services.intent_service import classify_intent
+from app.services.restaurant_service import list_restaurants
 
 
 def test_chat_returns_stub_response() -> None:
@@ -142,18 +145,22 @@ def test_supported_intent_still_uses_stub_model_response() -> None:
     assert response.message.content == "Stub reply: How is the food here?"
 
 
-def test_supported_intent_builds_tool_plan_and_decision_context() -> None:
+def test_supported_intent_builds_tool_plan_and_executes_tools(
+    db_session: Session,
+) -> None:
+    restaurant = list_restaurants(db_session, limit=1)[0]
+
     result = get_chat_graph().invoke(
         build_graph_input(
             ChatRequest(
                 restaurant_context={
-                    "business_id": "restaurant-1",
-                    "name": "Demo Bistro",
-                    "city": "Philadelphia",
-                    "state": "PA",
-                    "stars": 4.5,
-                    "review_count": 120,
-                    "categories": ["Restaurants", "French"],
+                    "business_id": restaurant.business_id,
+                    "name": restaurant.name,
+                    "city": restaurant.city,
+                    "state": restaurant.state,
+                    "stars": restaurant.stars,
+                    "review_count": restaurant.review_count,
+                    "categories": restaurant.categories,
                 },
                 messages=[{"role": "user", "content": "Is it good for a date?"}],
             )
@@ -168,15 +175,58 @@ def test_supported_intent_builds_tool_plan_and_decision_context() -> None:
         "get_negative_review_patterns",
     ]
     assert result["tool_results"]["get_scenario_fit"]["args"] == {
-        "business_id": "restaurant-1",
+        "business_id": restaurant.business_id,
         "scenario": "date",
     }
-    assert result["decision_context"]["restaurant"]["business_id"] == "restaurant-1"
+    assert result["tool_results"]["get_restaurant_profile"]["status"] == "ok"
+    assert result["tool_results"]["get_restaurant_profile"]["data"]["business_id"] == (
+        restaurant.business_id
+    )
+    assert result["tool_results"]["get_scenario_fit"]["tool_name"] == "get_scenario_fit"
+    assert result["tool_results"]["get_scenario_fit"]["status"] == "ok"
+    assert result["tool_errors"] == []
+    assert result["evidence_coverage"]["has_restaurant_profile"] is True
+    assert result["evidence_coverage"]["has_scenario_fit"] is True
+    assert result["decision_context"]["restaurant"]["business_id"] == restaurant.business_id
     assert result["decision_context"]["intent"] == {
         "category": "scenario",
         "label": "date",
     }
+    assert result["decision_context"]["profile"]["business_id"] == restaurant.business_id
+    assert result["decision_context"]["scenario_fit"]["scenario"] == "date"
+    assert result["decision_context"]["scenario_fit"]["fit_label"] in {
+        "good_fit",
+        "mixed_fit",
+        "poor_fit",
+        "insufficient_data",
+    }
+    assert result["decision_context"]["review_evidence"]["total"] >= 0
+    assert "top_cons" in result["decision_context"]["negative_patterns"]
+    assert isinstance(result["decision_context"]["risks"], list)
+    assert "Use scenario fit label:" in " ".join(result["decision_context"]["answer_hints"])
     assert result["answer_requirements"]["include_risk_warnings"] is True
+
+
+def test_supported_intent_without_restaurant_context_skips_database_tools() -> None:
+    result = get_chat_graph().invoke(
+        build_graph_input(ChatRequest(messages=[{"role": "user", "content": "How is the food?"}]))
+    )
+
+    assert result["intent_label"] == "food"
+    assert result["tool_results"]["get_restaurant_profile"]["status"] == "skipped"
+    assert result["tool_results"]["get_review_aspect_evidence"]["status"] == "skipped"
+    assert result["tool_errors"] == [
+        "Missing restaurant business_id for tool: get_restaurant_profile",
+        "Missing restaurant business_id for tool: get_restaurant_aspect_summary",
+        "Missing restaurant business_id for tool: get_review_aspect_evidence",
+    ]
+    assert result["evidence_coverage"]["has_restaurant_profile"] is False
+    assert result["evidence_coverage"]["has_review_evidence"] is False
+    assert result["decision_context"]["profile"] is None
+    assert result["decision_context"]["review_evidence"] == {}
+    assert result["decision_context"]["answer_hints"] == [
+        "State evidence limitations for missing planned tool outputs."
+    ]
 
 
 def test_unknown_intent_bypasses_restaurant_tool_nodes() -> None:

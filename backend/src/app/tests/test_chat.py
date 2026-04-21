@@ -130,6 +130,10 @@ def test_intent_classifier_detects_category_and_label_pairs() -> None:
         "category": "summary",
         "label": "summary",
     }
+    assert classify_intent("你好").model_dump() == {
+        "category": "greeting",
+        "label": "greeting",
+    }
     assert classify_intent("Tell me something random").model_dump() == {
         "category": "unknown",
         "label": "unsupported",
@@ -144,6 +148,14 @@ def test_supported_intent_still_uses_stub_model_response() -> None:
     assert response.intent.category == "aspect"
     assert response.intent.label == "food"
     assert response.message.content == "Stub reply: [grounded-context] How is the food here?"
+    assert response.process_trace.intent.label == "food"
+    assert [tool.name for tool in response.process_trace.tool_plan.tools] == [
+        "get_restaurant_profile",
+        "get_restaurant_aspect_summary",
+        "get_review_aspect_evidence",
+    ]
+    assert response.process_trace.tool_execution[0].status == "skipped"
+    assert "State evidence limitations" in response.process_trace.answer_basis[0]
 
 
 def test_supported_intent_builds_tool_plan_and_executes_tools(
@@ -275,3 +287,28 @@ def test_unknown_intent_bypasses_restaurant_tool_nodes() -> None:
     assert "Sorry, I can only help with a fixed set of restaurant questions right now." in (
         result["messages"][-1].content
     )
+
+
+def test_greeting_intent_bypasses_restaurant_tool_nodes() -> None:
+    result = get_chat_graph().invoke(
+        build_graph_input(ChatRequest(messages=[{"role": "user", "content": "hi"}]))
+    )
+
+    assert result["intent_category"] == "greeting"
+    assert result["intent_label"] == "greeting"
+    assert "tool_plan" not in result
+    assert "decision_context" not in result
+    assert "Pick a restaurant first" in result["messages"][-1].content
+
+
+def test_chat_response_includes_process_trace_for_greeting() -> None:
+    response = run_chat(ChatRequest(messages=[{"role": "user", "content": "hi"}]))
+
+    assert response.intent.category == "greeting"
+    assert response.process_trace.intent.summary == (
+        "Recognized a greeting, so no restaurant database tools were needed."
+    )
+    assert response.process_trace.tool_plan.tools == []
+    assert response.process_trace.tool_execution == []
+    assert response.process_trace.evidence.coverage == {}
+    assert "short greeting" in response.process_trace.answer_basis[0]

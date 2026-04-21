@@ -325,6 +325,129 @@ textarea {
   letter-spacing: 0.14em;
 }
 
+.process-trace {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+  overflow: hidden;
+}
+
+.process-trace summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 15px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.process-trace summary::-webkit-details-marker {
+  display: none;
+}
+
+.process-trace summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.process-trace summary strong {
+  color: #2f604b;
+  font-size: 13px;
+}
+
+.process-trace-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 15px 15px;
+}
+
+.process-trace-section {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(25, 22, 17, 0.035);
+}
+
+.process-trace-section p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.process-trace-label {
+  display: block;
+  color: #2f604b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.process-trace-list,
+.process-trace-basis {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.process-trace-list li,
+.process-trace-basis li {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.process-trace-list strong {
+  display: block;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.process-trace-list span {
+  display: block;
+  margin-top: 2px;
+}
+
+.process-trace-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.process-trace-chip {
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.process-trace-chip--ok {
+  background: rgba(47, 96, 75, 0.12);
+  color: #2f604b;
+}
+
+.process-trace-chip--missing {
+  background: rgba(138, 31, 31, 0.1);
+  color: #8a1f1f;
+}
+
+.process-trace-chip--neutral {
+  background: rgba(25, 22, 17, 0.08);
+  color: var(--muted);
+}
+
+.process-trace-empty {
+  margin: 0;
+  padding: 0 15px 15px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 .chat-bubble {
   max-width: min(85%, 42rem);
   padding: 16px 18px;

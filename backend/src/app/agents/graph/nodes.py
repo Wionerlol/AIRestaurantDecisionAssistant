@@ -4,9 +4,10 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.graph.state import ChatGraphState
+from app.core.config import settings
 from app.core.llm import get_chat_model
 from app.services.intent_service import classify_intent
 
@@ -110,12 +111,26 @@ TOOL_COVERAGE_KEYS = {
     "get_supported_intents": "has_supported_intents",
 }
 
+TOOL_ALLOWED_ARGS = {
+    "get_restaurant_profile": set(),
+    "get_restaurant_aspect_summary": set(),
+    "get_review_aspect_evidence": {"aspect", "aspects", "sentiment", "limit"},
+    "get_negative_review_patterns": {"aspect", "limit"},
+    "get_positive_review_patterns": {"aspect", "limit"},
+    "get_scenario_fit": {"scenario", "evidence_limit"},
+    "get_recent_review_trend": {"months", "limit"},
+    "get_decision_inputs": {"intent_label"},
+    "get_supported_intents": set(),
+}
+
+ASPECT_VALUES = {"food", "service", "price", "ambience", "waiting_time"}
+SENTIMENT_VALUES = {"positive", "negative", "neutral", "mixed"}
+SCENARIO_VALUES = {"date", "family", "quick_meal"}
+DECISION_INTENT_VALUES = {"worth_it", "should_go"}
+
 
 def classify_user_intent(state: ChatGraphState) -> ChatGraphState:
-    latest_user_message = next(
-        (message.content for message in reversed(state["messages"]) if message.type == "human"),
-        "",
-    )
+    latest_user_message = _latest_user_message(state)
     intent = classify_intent(latest_user_message)
     return {
         "intent_category": intent.category,
@@ -123,22 +138,217 @@ def classify_user_intent(state: ChatGraphState) -> ChatGraphState:
     }
 
 
+def _latest_user_message(state: ChatGraphState) -> str:
+    return next(
+        (message.content for message in reversed(state["messages"]) if message.type == "human"),
+        "",
+    )
+
+
 def select_tools_for_intent(state: ChatGraphState) -> ChatGraphState:
     intent_label = state["intent_label"]
-    tool_plan = INTENT_TOOL_PLANS.get(intent_label, INTENT_TOOL_PLANS["unsupported"])
+    fallback_plan = INTENT_TOOL_PLANS.get(intent_label, INTENT_TOOL_PLANS["unsupported"])
 
     if intent_label == "unsupported":
         return {
-            "tool_plan": tool_plan,
+            "tool_plan": fallback_plan,
             "tool_plan_reason": "The intent is unsupported, so only supported-intent guidance is needed.",
             "unsupported_reason": "Unsupported restaurant question.",
         }
 
+    llm_tool_plan, llm_reason = _select_tools_with_llm(state, fallback_plan)
+    if llm_tool_plan:
+        return {
+            "tool_plan": llm_tool_plan,
+            "tool_plan_reason": llm_reason
+            or "LLM selected tools from the suggested route and tool docstrings.",
+            "unsupported_reason": None,
+        }
+
     return {
-        "tool_plan": tool_plan,
-        "tool_plan_reason": f"Selected tools for supported intent label: {intent_label}.",
+        "tool_plan": fallback_plan,
+        "tool_plan_reason": (
+            f"Fallback deterministic tools selected for supported intent label: {intent_label}."
+        ),
         "unsupported_reason": None,
     }
+
+
+def _select_tools_with_llm(
+    state: ChatGraphState,
+    fallback_plan: list[dict[str, object]],
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    if settings.llm_provider.lower() == "stub":
+        return None, None
+
+    try:
+        response = get_chat_model().invoke(_build_tool_selection_messages(state, fallback_plan))
+        payload = _parse_json_object(str(response.content))
+        plan = _validate_tool_plan(payload.get("tool_plan"), state["intent_label"])
+        if not plan:
+            return None, None
+        reason = payload.get("reason")
+        return plan, str(reason) if reason else None
+    except Exception:
+        return None, None
+
+
+def _build_tool_selection_messages(
+    state: ChatGraphState,
+    fallback_plan: list[dict[str, object]],
+) -> list[SystemMessage | HumanMessage]:
+    system_prompt = (
+        "You are the tool planner for a restaurant decision assistant.\n"
+        "Choose a compact sequence of database tools for the user's intent.\n"
+        "Return strict JSON only with keys: tool_plan and reason.\n\n"
+        'tool_plan format: [{"name": "tool_name", "args": {...}}]\n\n'
+        "Rules:\n"
+        "- Use only tool names from the catalog.\n"
+        "- The executor injects business_id; do not include business_id in args.\n"
+        "- Prefer the suggested route, but adapt when the user asks for a narrower aspect, sentiment, or scenario.\n"
+        "- Keep 1 to 6 tools.\n"
+        "- Aspect intents should usually include profile, aspect summary, and review aspect evidence.\n"
+        "- Scenario intents should include scenario fit plus supporting review evidence or risks.\n"
+        "- worth_it/should_go should include get_decision_inputs with intent_label.\n"
+        "- complaints/warnings should emphasize negative patterns, negative review evidence, and recent trend.\n"
+        "- Do not invent arguments or unsupported enum values."
+    )
+    payload = {
+        "intent": {
+            "category": state["intent_category"],
+            "label": state["intent_label"],
+        },
+        "latest_user_message": _latest_user_message(state),
+        "restaurant_context": {
+            "has_selected_restaurant": bool(state.get("restaurant_business_id")),
+            "name": state.get("restaurant_name"),
+            "city": state.get("restaurant_city"),
+            "state": state.get("restaurant_state"),
+        },
+        "suggested_route": fallback_plan,
+        "tool_catalog": _build_tool_catalog(),
+    }
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=json.dumps(payload, ensure_ascii=False, default=str)),
+    ]
+
+
+def _build_tool_catalog() -> list[dict[str, Any]]:
+    catalog = []
+    for name, tool in _get_tool_registry().items():
+        args_schema = getattr(tool, "args_schema", None)
+        schema: dict[str, Any] = {}
+        if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+            schema = args_schema.model_json_schema()
+        catalog.append(
+            {
+                "name": name,
+                "description": str(getattr(tool, "description", "") or "")[:1800],
+                "allowed_args": sorted(TOOL_ALLOWED_ARGS.get(name, set())),
+                "args_schema": schema,
+            }
+        )
+    return catalog
+
+
+def _parse_json_object(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("No JSON object found.")
+    parsed = json.loads(cleaned[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Expected JSON object.")
+    return parsed
+
+
+def _validate_tool_plan(raw_plan: Any, intent_label: str) -> list[dict[str, Any]] | None:
+    if not isinstance(raw_plan, list):
+        return None
+
+    registry = _get_tool_registry()
+    validated_plan: list[dict[str, Any]] = []
+    seen_tool_names = set()
+
+    for raw_call in raw_plan[:6]:
+        if not isinstance(raw_call, dict):
+            continue
+        tool_name = raw_call.get("name")
+        if not isinstance(tool_name, str) or tool_name not in registry:
+            continue
+        raw_args = raw_call.get("args", {})
+        if not isinstance(raw_args, dict):
+            raw_args = {}
+        args = _sanitize_tool_args(tool_name, raw_args, intent_label)
+        if tool_name in seen_tool_names:
+            continue
+        seen_tool_names.add(tool_name)
+        validated_plan.append({"name": tool_name, "args": args})
+
+    return validated_plan or None
+
+
+def _sanitize_tool_args(
+    tool_name: str,
+    raw_args: dict[str, Any],
+    intent_label: str,
+) -> dict[str, Any]:
+    allowed_args = TOOL_ALLOWED_ARGS.get(tool_name, set())
+    args = {key: value for key, value in raw_args.items() if key in allowed_args}
+
+    if tool_name in {"get_restaurant_profile", "get_restaurant_aspect_summary"}:
+        return {}
+    if tool_name == "get_supported_intents":
+        return {}
+
+    if "aspect" in args and args["aspect"] not in ASPECT_VALUES:
+        args.pop("aspect")
+    if "aspects" in args:
+        if isinstance(args["aspects"], list):
+            aspects = [aspect for aspect in args["aspects"] if aspect in ASPECT_VALUES]
+            if aspects:
+                args["aspects"] = aspects
+            else:
+                args.pop("aspects")
+        else:
+            args.pop("aspects")
+    if "sentiment" in args and args["sentiment"] not in SENTIMENT_VALUES:
+        args.pop("sentiment")
+    if "scenario" in args and args["scenario"] not in SCENARIO_VALUES:
+        args.pop("scenario")
+    if "intent_label" in args and args["intent_label"] not in DECISION_INTENT_VALUES:
+        args.pop("intent_label")
+
+    if (
+        tool_name == "get_scenario_fit"
+        and "scenario" not in args
+        and intent_label in SCENARIO_VALUES
+    ):
+        args["scenario"] = intent_label
+    if (
+        tool_name == "get_decision_inputs"
+        and "intent_label" not in args
+        and intent_label in DECISION_INTENT_VALUES
+    ):
+        args["intent_label"] = intent_label
+
+    for integer_arg, max_value in {"limit": 20, "evidence_limit": 10, "months": 36}.items():
+        if integer_arg not in args:
+            continue
+        try:
+            value = int(args[integer_arg])
+        except (TypeError, ValueError):
+            args.pop(integer_arg)
+            continue
+        args[integer_arg] = max(1, min(value, max_value))
+
+    return args
 
 
 def run_restaurant_tools(state: ChatGraphState) -> ChatGraphState:
@@ -517,6 +727,23 @@ def generate_unsupported_response(_: ChatGraphState) -> ChatGraphState:
             )
         ]
     }
+
+
+def generate_greeting_response(state: ChatGraphState) -> ChatGraphState:
+    restaurant_name = state.get("restaurant_name")
+    if restaurant_name:
+        content = (
+            f"Hi! I can help you decide about {restaurant_name}. "
+            "Ask me about whether it is worth going, food, service, price, ambience, "
+            "date/family/quick-meal fit, complaints, warnings, or a summary."
+        )
+    else:
+        content = (
+            "Hi! Pick a restaurant first, then ask me about whether it is worth going, "
+            "food, service, price, ambience, date/family/quick-meal fit, complaints, "
+            "warnings, or a summary."
+        )
+    return {"messages": [AIMessage(content=content)]}
 
 
 def generate_chat_response(state: ChatGraphState) -> ChatGraphState:

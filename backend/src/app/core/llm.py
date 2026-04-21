@@ -24,10 +24,21 @@ class StubChatModel(SimpleChatModel):
         **kwargs: Any,
     ) -> str:
         del stop, run_manager, kwargs
+        decision_context_message = next(
+            (
+                message.content
+                for message in reversed(messages)
+                if message.type == "system"
+                and "Use this structured restaurant decision context" in message.content
+            ),
+            None,
+        )
         latest_user_message = next(
             (message.content for message in reversed(messages) if message.type == "human"),
             settings.stub_llm_default_reply,
         )
+        if decision_context_message is not None:
+            return f"{settings.stub_llm_response_prefix}[grounded-context] {latest_user_message}"
         return f"{settings.stub_llm_response_prefix}{latest_user_message}"
 
     def _generate(

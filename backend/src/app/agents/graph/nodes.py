@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, SystemMessage
 
 from app.agents.graph.state import ChatGraphState
 from app.core.llm import get_chat_model
@@ -520,7 +521,46 @@ def generate_unsupported_response(_: ChatGraphState) -> ChatGraphState:
 
 def generate_chat_response(state: ChatGraphState) -> ChatGraphState:
     model = get_chat_model()
-    response = model.invoke(state["messages"])
+    response = model.invoke([*state["messages"], _build_decision_context_message(state)])
     if not isinstance(response, AIMessage):
         response = AIMessage(content=str(response.content))
     return {"messages": [response]}
+
+
+def _build_decision_context_message(state: ChatGraphState) -> SystemMessage:
+    payload = {
+        "decision_context": state.get("decision_context", {}),
+        "answer_requirements": state.get("answer_requirements", {}),
+        "missing_evidence_notes": state.get("missing_evidence_notes", []),
+        "tool_errors": state.get("tool_errors", []),
+    }
+    return SystemMessage(
+        content=(
+            "Use this structured restaurant decision context to answer the user's "
+            "latest question. Ground the answer in this evidence, stay scoped to "
+            "the selected restaurant, mention relevant risks when requested, and "
+            "briefly state evidence limitations when listed.\n\n"
+            "Answer style requirements:\n"
+            "- Match the user's language. If the user asks in Chinese, answer in natural, conversational Chinese.\n"
+            "- Start with a direct answer to the user's question.\n"
+            "- Then give 2-4 concise evidence-backed reasons from the structured context.\n"
+            "- Mention concrete review or model signals when available, such as fit labels, decision labels, aspect scores, top pros, top cons, risk flags, recent trends, or representative review evidence.\n"
+            "- Mention risks or caveats when they are present or when answer_requirements.include_risk_warnings is true.\n"
+            "- If planned evidence is missing, briefly say what evidence is limited; do not overstate confidence.\n"
+            "- Do not expose raw JSON, table names, internal tool names, or implementation details unless the user asks for debugging details.\n"
+            "- Keep the answer practical and easy to act on.\n\n"
+            "Intent-specific guidance:\n"
+            "- worth_it: say whether it is worth it, worth considering, or not worth it; balance strengths and weaknesses.\n"
+            "- should_go: say go, consider with caution, or skip; focus more on downside risk and deal-breakers.\n"
+            "- food/service/price/ambience: answer that aspect directly, then cite review evidence and relevant scores or patterns.\n"
+            "- date/family/quick_meal: answer whether the restaurant fits the scenario, then cite scenario fit, supporting evidence, and caveats.\n"
+            "- complaints/warnings: prioritize the main complaints, risk flags, and recent negative signals; do not force a recommendation.\n"
+            "- summary: give the overall impression, main strengths, main weaknesses, and who it is best for.\n\n"
+            "Recommended response shape:\n"
+            "1. Direct conclusion in one sentence.\n"
+            "2. Evidence: 2-4 short points or a compact paragraph.\n"
+            "3. Caveat/risk if relevant.\n"
+            "4. Practical recommendation or next step.\n\n"
+            f"{json.dumps(payload, ensure_ascii=False, default=str)}"
+        )
+    )

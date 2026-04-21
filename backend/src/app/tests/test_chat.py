@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.agents.graph.graph import get_chat_graph
+from app.agents.graph.nodes import _build_decision_context_message
 from app.schemas.chat import ChatRequest
 from app.services.chat_service import build_chat_messages, build_graph_input, run_chat
 from app.services.intent_service import classify_intent
@@ -36,7 +37,7 @@ def test_chat_includes_configurable_stub_prefix() -> None:
         response = run_chat(
             ChatRequest(messages=[{"role": "user", "content": "How is the service here?"}])
         )
-        assert response.message.content == "Configured: How is the service here?"
+        assert response.message.content == "Configured: [grounded-context] How is the service here?"
     finally:
         settings.stub_llm_response_prefix = original_prefix
         reset_chat_model()
@@ -142,7 +143,7 @@ def test_supported_intent_still_uses_stub_model_response() -> None:
 
     assert response.intent.category == "aspect"
     assert response.intent.label == "food"
-    assert response.message.content == "Stub reply: How is the food here?"
+    assert response.message.content == "Stub reply: [grounded-context] How is the food here?"
 
 
 def test_supported_intent_builds_tool_plan_and_executes_tools(
@@ -205,6 +206,9 @@ def test_supported_intent_builds_tool_plan_and_executes_tools(
     assert isinstance(result["decision_context"]["risks"], list)
     assert "Use scenario fit label:" in " ".join(result["decision_context"]["answer_hints"])
     assert result["answer_requirements"]["include_risk_warnings"] is True
+    assert result["messages"][-1].content == (
+        "Stub reply: [grounded-context] Is it good for a date?"
+    )
 
 
 def test_supported_intent_without_restaurant_context_skips_database_tools() -> None:
@@ -227,6 +231,35 @@ def test_supported_intent_without_restaurant_context_skips_database_tools() -> N
     assert result["decision_context"]["answer_hints"] == [
         "State evidence limitations for missing planned tool outputs."
     ]
+    assert result["messages"][-1].content == ("Stub reply: [grounded-context] How is the food?")
+
+
+def test_decision_context_prompt_requires_conversational_evidence_grounded_answer() -> None:
+    message = _build_decision_context_message(
+        {
+            "decision_context": {
+                "intent": {"category": "scenario", "label": "date"},
+                "scenario_fit": {"fit_label": "mixed_fit"},
+                "risks": ["long wait"],
+            },
+            "answer_requirements": {
+                "include_risk_warnings": True,
+                "mention_evidence_limitations": False,
+            },
+            "missing_evidence_notes": [],
+            "tool_errors": [],
+        }
+    )
+
+    assert message.type == "system"
+    assert "Match the user's language" in message.content
+    assert "answer in natural, conversational Chinese" in message.content
+    assert "Start with a direct answer" in message.content
+    assert "2-4 concise evidence-backed reasons" in message.content
+    assert "Mention risks or caveats" in message.content
+    assert "Intent-specific guidance" in message.content
+    assert "date/family/quick_meal" in message.content
+    assert "Do not expose raw JSON" in message.content
 
 
 def test_unknown_intent_bypasses_restaurant_tool_nodes() -> None:
